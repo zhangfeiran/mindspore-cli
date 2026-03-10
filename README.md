@@ -110,10 +110,13 @@ See [`docs/ms-cli-arch.md`](docs/ms-cli-arch.md) for the current architecture an
 ```text
 ms-cli/
 ├── cmd/ms-cli/                 # CLI entrypoint
-├── internal/app/               # bootstrap, wiring, startup
+├── internal/
+│   ├── app/                    # bootstrap, wiring, startup, commands
+│   ├── project/                # roadmap and weekly helpers
+│   └── train/                  # training types
 ├── agent/
 │   ├── context/                # budget, compaction, context manager
-│   ├── loop/                   # engine interfaces and flow
+│   ├── loop/                   # ReAct engine
 │   ├── memory/                 # policy, store, retrieve
 │   ├── orchestrator/           # mode dispatch (agent vs workflow) based on planner
 │   ├── planner/                # LLM-based execution mode decision and plan generation
@@ -122,10 +125,10 @@ ms-cli/
 │   ├── domain/                 # external domain client + schema
 │   ├── llm/                    # provider registry and clients
 │   └── skills/                 # skill invocation + repo
-├── internal/project/           # roadmap and weekly helpers
 ├── permission/                 # permission engine
 ├── workflow/
-│   └── executor/               # workflow executor (stub for now)
+│   ├── executor/               # workflow executor (stub for now)
+│   └── train/                  # training workflow + demo
 ├── runtime/shell/              # low-level shell runner
 ├── tools/
 │   ├── fs/                     # filesystem operations
@@ -134,11 +137,12 @@ ms-cli/
 ├── report/                     # report generation
 ├── ui/
 │   ├── app.go                  # root Bubble Tea model
-│   ├── components/             # spinner, textinput, viewport
-│   ├── model/                  # shared state types
-│   ├── panels/                 # topbar, chat, hintbar
+│   ├── components/             # spinner, textinput, viewport, thinking
+│   ├── model/                  # shared state types, training model
+│   ├── panels/                 # topbar, chat, hintbar, training panels
 │   └── slash/                  # slash command handling
 ├── configs/                    # config loading and shared types
+├── demo/scenarios/             # demo scenario data
 ├── test/mocks/                 # test doubles
 ├── docs/
 │   ├── roadmap/ROADMAP.md

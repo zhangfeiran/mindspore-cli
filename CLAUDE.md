@@ -13,14 +13,20 @@ go vet ./...            # static analysis
 ```
 ms-cli/
   cmd/ms-cli/main.go        # CLI entrypoint (thin wrapper)
-  internal/app/              # bootstrap, wire, run, commands, demo — private to this repo
+  internal/
+    app/                     # bootstrap, wire, run, commands, demo, train — private to this repo
+    project/                 # roadmap and weekly helpers
+    train/                   # training types
   agent/
     loop/                    # ReAct execution loop (pure: LLM → tool → LLM → done)
-    orchestrator/            # Mode dispatch: standard → loop, plan → planner → loop
-    planner/                 # LLM-based task decomposition into []Step
+    orchestrator/            # Dispatch: planner decides agent vs workflow mode
+    planner/                 # LLM-based execution mode decision and plan generation
     session/                 # Session state and persistence
     memory/                  # Agent memory
     context/                 # Context window management
+  workflow/
+    executor/                # Workflow executor (stub + demo)
+    train/                   # Training workflow + demo scenario
   runtime/
     shell/                   # Shell command execution (stateful: workspace, env, timeout)
   tools/
@@ -28,10 +34,11 @@ ms-cli/
     shell/                   # LLM-callable shell tool (thin wrapper over runtime/shell)
   permission/                # Standalone permission engine
   integrations/              # LLM providers, external APIs
-  ui/                        # Bubbletea TUI panels and components
+  ui/                        # Bubbletea TUI panels, components, training panels
   report/                    # Report generation
   trace/                     # Execution tracing and logs
   configs/                   # Shared configuration types
+  demo/scenarios/            # Demo scenario data (JSON)
   docs/                      # Architecture docs, roadmap
 ```
 
@@ -48,9 +55,10 @@ This project has strict package ownership rules. **Do not move, merge, or restru
 Dependencies flow **downward only**. Never create upward or circular imports.
 
 ```
-cmd/ms-cli → internal/app → agent, ui
+cmd/ms-cli → internal/app → agent, workflow, ui
                            ↓
               agent → permission, integrations, configs
+              workflow → agent/orchestrator, agent/planner, configs
                            ↓
               tools → runtime, configs
                            ↓
@@ -66,11 +74,13 @@ User input
     ↓
 internal/app/          # routes commands or tasks
     ↓
-agent/orchestrator/    # mode dispatch (standard or plan)
+agent/orchestrator/    # calls planner, dispatches by mode
+    ↓
+agent/planner/         # LLM decides: agent or workflow?
     ↓                        ↓
-  standard mode           plan mode
+  agent mode             workflow mode
     ↓                        ↓
-agent/loop/            agent/planner/ → agent/loop/ (per step)
+agent/loop/            workflow/executor/ (stub → falls back to agent)
     ↓
 tools/                 # LLM-callable tools (schema + params)
     ↓
@@ -84,8 +94,10 @@ cmd/ms-cli/       # Calls internal/app only. Nothing else.
 internal/app/     # Wiring layer. May import anything. Must NOT be imported by any other package.
 agent/            # May import permission/, integrations/, configs/.
                   # Must NOT import internal/app/, ui/, cmd/, runtime/, tools/ directly.
+workflow/         # May import agent/orchestrator/, agent/planner/, configs/.
+                  # Must NOT import internal/app/, ui/, tools/, runtime/.
 tools/            # May import runtime/, integrations/, configs/.
-                  # Must NOT import agent/, ui/.
+                  # Must NOT import agent/, ui/, workflow/.
 runtime/          # May import configs/. Must NOT import any other internal package.
 permission/       # May import configs/. Must NOT import any other internal package.
 integrations/     # May import configs/. Must NOT import agent/, ui/, runtime/.
@@ -102,8 +114,8 @@ report/           # May import configs/, trace/. Must NOT import agent/, ui/.
 | `cmd/ms-cli/` | CLI entrypoint. Thin — just calls `internal/app.Run()`. | Built |
 | `internal/app/` | Config init, dependency injection, runtime assembly, CLI/TUI startup, slash commands. Go-private (not importable externally). | Built |
 | `agent/loop/` | Pure ReAct execution loop: LLM → tool call → LLM → done. ~295 lines. | Built |
-| `agent/orchestrator/` | Mode dispatch. Standard mode → loop directly. Plan mode → planner → loop per step. | Built |
-| `agent/planner/` | LLM-based task decomposition. Takes goal string + available tools, produces `[]Step`. | Built |
+| `agent/orchestrator/` | Calls planner, dispatches by mode. Agent mode → loop. Workflow mode → workflow executor (falls back to agent if stub). | Built |
+| `agent/planner/` | LLM decides execution mode (`agent` or `workflow`). Produces `Plan` with mode, goal, optional workflow ID, and `[]Step`. | Built |
 | `agent/session/` | Session state and persistence. | Built |
 | `agent/memory/` | Agent memory management. | Built |
 | `agent/context/` | Context window management (token counting, compaction). | Built |
@@ -113,7 +125,11 @@ report/           # May import configs/, trace/. Must NOT import agent/, ui/.
 | `tools/shell/` | Shell tool: thin LLM wrapper that delegates to `runtime/shell`. | Built |
 | `permission/` | Permission engine (levels, decisions, cache). Shared by agent, tools, runtime. | Built |
 | `integrations/` | External service clients (LLM providers via OpenAI-compatible API). | Built |
-| `ui/` | Bubbletea TUI: chat panel, components, slash command completion. | Built |
+| `ui/` | Bubbletea TUI: chat panel, components, slash commands, training panels. | Built |
+| `workflow/executor/` | Workflow executor stub + demo executor (scenario playback). | Built |
+| `workflow/train/` | Training workflow definition and demo scenario. | Built |
+| `internal/train/` | Training types shared across packages. | Built |
+| `demo/scenarios/` | Demo scenario data (JSON). | Built |
 | `configs/` | Configuration types and constants. | Built |
 | `trace/` | Structured event logs (JSONL trajectories, tool call traces). Internal-facing. | Built |
 | `report/` | Report generation from traces/results. | Built |
@@ -124,7 +140,7 @@ report/           # May import configs/, trace/. Must NOT import agent/, ui/.
 |---|---|---|
 | `runtime/workspace/` | Working directory and file management. | When workflow needs isolated workspaces. |
 | `runtime/artifacts/` | User-visible output files (generated code, reports). | When workflow produces deliverables. |
-| `workflow/engine/` | Execute `[]planner.Step` via tools with DAG, retry. | When `runPlanViaLoop` fallback is insufficient. |
+| `workflow/executor/` (real impl) | Execute `[]planner.Step` via tools with DAG, retry. Currently a stub that falls back to agent mode. | When stub fallback is insufficient. |
 | `agent/router/` | Load skill definitions from `mindspore-skills`, match user intent → skill. | When skill system is needed. |
 
 ### Core Types — Do Not Change Without Approval
@@ -134,8 +150,9 @@ These types are foundational. Changing their signatures breaks multiple packages
 - `permission.PermissionLevel` and `permission.PermissionDecision` (`permission/types.go`)
 - `integrations/llm` provider interfaces and `ToolSchema`
 - `agent/loop` engine interfaces and `Event` type
-- `agent/planner.Step` — consumed by orchestrator and future workflow
-- `agent/orchestrator.RunMode` — mode dispatch enum
+- `agent/planner.Plan` and `planner.Step` — consumed by orchestrator and workflow executor
+- `agent/planner.ExecutionMode` (`agent` or `workflow`) — LLM-decided mode
+- `agent/orchestrator.RunRequest` and `RunEvent` — orchestrator-level I/O types
 - `agent/session` session and snapshot types
 
 If you need to extend a core type, **add new fields/methods** rather than modifying existing ones.
@@ -143,22 +160,23 @@ If you need to extend a core type, **add new fields/methods** rather than modify
 ### Interface Boundaries Between Packages
 
 ```go
-// agent/planner produces this; orchestrator and future workflow consume it
-type Step struct {
-    Description string         `json:"description"`
-    Tool        string         `json:"tool,omitempty"`
-    Params      map[string]any `json:"params,omitempty"`
-    DependsOn   []string       `json:"depends_on,omitempty"`
+// agent/planner produces this; orchestrator and workflow executor consume it
+type Plan struct {
+    Mode     ExecutionMode  `json:"mode"`              // "agent" or "workflow"
+    Goal     string         `json:"goal"`
+    Workflow string         `json:"workflow,omitempty"` // named workflow ID
+    Steps    []Step         `json:"steps,omitempty"`
+    Params   map[string]any `json:"params,omitempty"`
 }
 
-// orchestrator defines this; workflow/engine will implement it
-type WorkflowRunner interface {
-    Execute(ctx context.Context, steps []planner.Step) ([]StepResult, error)
+// orchestrator defines this; workflow/executor implements it
+type WorkflowExecutor interface {
+    Execute(ctx context.Context, req RunRequest, plan planner.Plan) ([]RunEvent, error)
 }
 
-// orchestrator defines this; agent/loop implements it
-type Engine interface {
-    RunWithContext(ctx context.Context, task loop.Task) ([]loop.Event, error)
+// orchestrator defines this; agent/loop (via adapter) implements it
+type AgentExecutor interface {
+    Execute(ctx context.Context, req RunRequest) ([]RunEvent, error)
 }
 ```
 
