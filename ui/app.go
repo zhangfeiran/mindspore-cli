@@ -1007,6 +1007,9 @@ func (a *App) handleTrainStarted(ev model.Event) {
 	run.StatusMessage = ev.Message
 	run.RunLabel = ev.Train.RunLabel
 	a.trainView.SetActiveRun(run.ID)
+	if ev.Message != "" {
+		a.state = a.state.WithMessage(model.Message{Kind: model.MsgAgent, Content: ev.Message})
+	}
 }
 
 func (a *App) handleTrainLogLine(ev model.Event) {
