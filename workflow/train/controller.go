@@ -44,6 +44,9 @@ func (c *Controller) Open(_ context.Context, req itrain.Request) *Session {
 	if failStep, ok := req.Target.Config["demo_fail_at_step"].(int); ok && failStep > 0 {
 		s.FailAtStep = failStep
 	}
+	if fixed, ok := req.Target.Config["demo_drift_fixed"].(bool); ok && fixed {
+		s.DriftFixed = true
+	}
 	return s
 }
 

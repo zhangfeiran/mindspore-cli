@@ -142,6 +142,175 @@ func (d *DemoBackend) runTraining(ctx context.Context, model, method string, sin
 	return nil
 }
 
+// RunSingleLaneEval simulates post-training evaluation.
+// When driftFixed is false, it detects accuracy drift (first run).
+// When driftFixed is true, evaluation passes (after accuracy fix).
+func RunSingleLaneEval(ctx context.Context, model, method string, driftFixed bool, sink func(Event)) error {
+	e := func(ev Event) bool { return emit(ctx, sink, withDefaultRunID(ev)) }
+
+	if !e(Event{Kind: EventEvalStarted, Message: "Evaluating model on ceval-valid benchmark...", DelayMs: 800}) {
+		return ctx.Err()
+	}
+
+	evalRunID := fmt.Sprintf("eval-%s", time.Now().Format("0102-150405"))
+
+	if !e(Event{Kind: EventLogLine, Message: fmt.Sprintf("[%s] Running ceval-valid (1,346 samples)...", evalRunID), DelayMs: 600}) {
+		return ctx.Err()
+	}
+	if !e(Event{Kind: EventLogLine, Message: fmt.Sprintf("[%s] Baseline accuracy (pre-train): 72.1%%", evalRunID), DelayMs: 500}) {
+		return ctx.Err()
+	}
+
+	if driftFixed {
+		// After accuracy fix: eval passes
+		if !e(Event{Kind: EventLogLine, Message: fmt.Sprintf("[%s] Trained model accuracy: 71.8%%", evalRunID), DelayMs: 500}) {
+			return ctx.Err()
+		}
+		if !e(Event{Kind: EventLogLine, Message: fmt.Sprintf("[%s] Accuracy drift: -0.3 pts (within tolerance)", evalRunID), DelayMs: 400}) {
+			return ctx.Err()
+		}
+		if !e(Event{
+			Kind:         EventEvalCompleted,
+			Message:      "Evaluation complete. Accuracy within tolerance.",
+			BaselineAcc:  72.1,
+			CandidateAcc: 71.8,
+			Drift:        -0.3,
+			DelayMs:      500,
+		}) {
+			return ctx.Err()
+		}
+		if !e(Event{
+			Kind:         EventVerificationPassed,
+			Message:      "Accuracy verified. Model scores 71.8% vs 72.1% baseline on ceval-valid. Drift: -0.3 pts.",
+			BaselineAcc:  72.1,
+			CandidateAcc: 71.8,
+			Drift:        -0.3,
+			DelayMs:      500,
+		}) {
+			return ctx.Err()
+		}
+		return nil
+	}
+
+	// First run: detect drift
+	if !e(Event{Kind: EventLogLine, Message: fmt.Sprintf("[%s] Trained model accuracy: 55.3%%", evalRunID), DelayMs: 500}) {
+		return ctx.Err()
+	}
+	if !e(Event{Kind: EventLogLine, Message: fmt.Sprintf("[%s] Accuracy drift: -16.8 pts", evalRunID), DelayMs: 400}) {
+		return ctx.Err()
+	}
+
+	if !e(Event{
+		Kind:         EventEvalCompleted,
+		Message:      "Evaluation complete. Significant accuracy drift detected.",
+		BaselineAcc:  72.1,
+		CandidateAcc: 55.3,
+		Drift:        -16.8,
+		DelayMs:      500,
+	}) {
+		return ctx.Err()
+	}
+
+	if !e(Event{
+		Kind:         EventDriftDetected,
+		Message:      "Accuracy regressed by 16.8 pts (72.1% → 55.3%) on ceval-valid.",
+		BaselineAcc:  72.1,
+		CandidateAcc: 55.3,
+		Drift:        -16.8,
+		IssueType:    "accuracy",
+		IssueTitle:   "Accuracy regression on ceval-valid benchmark",
+		IssueDetail:  "Trained model scores 55.3% vs 72.1% baseline on ceval-valid (1,346 samples). Regression of 16.8 pts suggests attention mask or dtype issue.",
+		DelayMs:      300,
+	}) {
+		return ctx.Err()
+	}
+
+	return nil
+}
+
+// AnalyzeSingleLaneDrift diagnoses accuracy drift for the single-lane flow.
+func AnalyzeSingleLaneDrift(ctx context.Context, model, method string, sink func(Event)) error {
+	e := func(ev Event) bool { return emit(ctx, sink, withDefaultRunID(ev)) }
+
+	if !e(Event{Kind: EventAnalysisStarted, Message: "Analyzing accuracy drift...", DelayMs: 500}) {
+		return ctx.Err()
+	}
+
+	if !e(Event{Kind: EventMessage, Message: "acc-agent: cause → fp16 dtype drift for softmax accumulation", DelayMs: 800}) {
+		return ctx.Err()
+	}
+
+	if !e(Event{
+		Kind:         EventActionSuggested,
+		IssueType:    "accuracy",
+		IssueID:      "accuracy-softmax-drift",
+		ActionID:     "fix-softmax-dtype",
+		ActionKind:   "apply_patch",
+		ActionLabel:  "apply fix",
+		ActionSource: "acc-agent",
+		Message:      "Suggested action: patch softmax dtype to bf16.",
+		DelayMs:      500,
+	}) {
+		return ctx.Err()
+	}
+
+	diffText := `--- a/configs/qwen3_lora.yaml
++++ b/configs/qwen3_lora.yaml
+@@ -18,5 +18,6 @@
+ attention:
+-  softmax_dtype: "float16"
++  softmax_dtype: "bfloat16"
++  force_upcast_softmax: True  # prevent fp16 accumulation drift`
+
+	if !e(Event{
+		Kind:        EventAnalysisReady,
+		IssueType:   "accuracy",
+		IssueID:     "accuracy-softmax-drift",
+		IssueTitle:  "fp16 softmax accumulation drift",
+		IssueDetail: "Softmax accumulation in fp16 causes precision loss during eval. Switching to bf16 preserves accuracy.",
+		Confidence:  "high",
+		FixSummary:  "Patch softmax dtype to bf16",
+		DiffText:    diffText,
+		ActionID:    "fix-softmax-dtype",
+		ActionKind:  "apply_patch",
+		ActionLabel: "apply fix",
+		Message:     "Analysis complete. Ready to apply fix.",
+		DelayMs:     400,
+	}) {
+		return ctx.Err()
+	}
+
+	return nil
+}
+
+// ApplySingleLaneDriftFix applies the accuracy fix (no rerun — user clicks rerun).
+func ApplySingleLaneDriftFix(ctx context.Context, model, method string, sink func(Event)) error {
+	e := func(ev Event) bool { return emit(ctx, sink, withDefaultRunID(ev)) }
+
+	if !e(Event{
+		Kind:       EventActionApplied,
+		IssueType:  "accuracy",
+		ActionID:   "fix-softmax-dtype",
+		ActionKind: "apply_patch",
+		Message:    "acc-agent: adding patch to softmax with bf16...",
+		DelayMs:    2000,
+	}) {
+		return ctx.Err()
+	}
+
+	if !e(Event{
+		Kind:       EventFixApplied,
+		IssueType:  "accuracy",
+		FixSummary: "Softmax dtype patched to bf16",
+		Message:    "acc-agent: patch added. please rerun experiment.",
+		DelayMs:    1500,
+	}) {
+		return ctx.Err()
+	}
+
+	return nil
+}
+
 // ── Legacy Phase 2 functions (dual-lane Torch-NPU vs MindSpore-NPU demo) ────────
 // These are preserved for the advanced demo scenario and are called
 // directly from internal/app/train.go for Phase 2 flows.

@@ -102,4 +102,8 @@ type Session struct {
 	// FailAtStep causes the demo backend to crash training at this step.
 	// 0 means no failure injection.
 	FailAtStep int
+
+	// DriftFixed indicates the accuracy fix has been applied,
+	// so post-training eval should pass instead of detecting drift.
+	DriftFixed bool
 }

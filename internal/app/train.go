@@ -152,7 +152,11 @@ func (a *Application) runAnalysis(ctx context.Context, runID uint64, req train.R
 	case "runtime":
 		err = wtrain.RunNPUAnalysis(ctx, req.Model, req.Method, sink)
 	case "accuracy":
-		err = wtrain.RunDriftAnalysis(ctx, req.Model, req.Method, sink)
+		if a.trainController != nil {
+			err = wtrain.AnalyzeSingleLaneDrift(ctx, req.Model, req.Method, sink)
+		} else {
+			err = wtrain.RunDriftAnalysis(ctx, req.Model, req.Method, sink)
+		}
 	case "performance":
 		err = wtrain.RunPerformanceAnalysis(ctx, req.Model, req.Method, sink)
 	default:
@@ -180,7 +184,11 @@ func (a *Application) runApplyFix(ctx context.Context, runID uint64, req train.R
 	case "runtime":
 		err = wtrain.RunNPUFixAndResume(ctx, req.Model, req.Method, sink)
 	case "accuracy":
-		err = wtrain.RunDriftFixAndRerun(ctx, req.Model, req.Method, sink)
+		if a.trainController != nil {
+			err = wtrain.ApplySingleLaneDriftFix(ctx, req.Model, req.Method, sink)
+		} else {
+			err = wtrain.RunDriftFixAndRerun(ctx, req.Model, req.Method, sink)
+		}
 	case "performance":
 		err = wtrain.RunPerformanceFixAndRerun(ctx, req.Model, req.Method, sink)
 	default:
@@ -198,10 +206,26 @@ func (a *Application) runApplyFix(ctx context.Context, runID uint64, req train.R
 	// Fix succeeded — clear failure injection so rerun won't fail again.
 	a.trainMu.Lock()
 	if a.trainReq != nil {
-		delete(a.trainReq.Target.Config, "demo_fail_at_step")
+		if a.trainReq.Target.Config != nil {
+			delete(a.trainReq.Target.Config, "demo_fail_at_step")
+		}
+		if issueType == "accuracy" {
+			if a.trainReq.Target.Config == nil {
+				a.trainReq.Target.Config = map[string]any{}
+			}
+			a.trainReq.Target.Config["demo_drift_fixed"] = true
+		}
 	}
 	if r, ok := a.trainReqs[a.trainCurrentRun]; ok {
-		delete(r.Target.Config, "demo_fail_at_step")
+		if r.Target.Config != nil {
+			delete(r.Target.Config, "demo_fail_at_step")
+		}
+		if issueType == "accuracy" {
+			if r.Target.Config == nil {
+				r.Target.Config = map[string]any{}
+			}
+			r.Target.Config["demo_drift_fixed"] = true
+		}
 		a.trainReqs[a.trainCurrentRun] = r
 	}
 	a.trainMu.Unlock()
