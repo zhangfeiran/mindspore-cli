@@ -298,8 +298,14 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			p := a.trainView.SelectionPopup
 			selected := p.Options[p.Selected]
 			a.trainView.SelectionPopup = nil
-			input := "add algo-feature " + selected.ID
-			if a.userCh != nil {
+			var input string
+			switch p.ActionID {
+			case "add_algo_feature":
+				input = "add algo-feature " + selected.ID
+			case "add_perf_feature":
+				input = "add perf-feature " + selected.ID
+			}
+			if input != "" && a.userCh != nil {
 				select {
 				case a.userCh <- input:
 				default:
@@ -954,6 +960,19 @@ func (a App) handleTrainAction() (tea.Model, tea.Cmd) {
 				{ID: "sparse-attn", Label: "Sparse Attention", Desc: "block-sparse attention pattern"},
 				{ID: "lora-plus", Label: "LoRA+", Desc: "differential learning rate for A/B"},
 				{ID: "galore", Label: "GaLore", Desc: "gradient low-rank projection"},
+			},
+		}
+		return a, nil
+	case "add_perf_feature":
+		a.trainView.SelectionPopup = &model.SelectionPopup{
+			Title:    "select perf-feature",
+			ActionID: "add_perf_feature",
+			Options: []model.SelectionOption{
+				{ID: "fa2", Label: "Flash Attention v2", Desc: "fused IO-aware attention kernel"},
+				{ID: "fused-adam", Label: "Fused Adam", Desc: "single-kernel adam optimizer"},
+				{ID: "gradient-ckpt", Label: "Gradient Checkpointing", Desc: "trade compute for memory"},
+				{ID: "bf16-mixed", Label: "BF16 Mixed Precision", Desc: "bfloat16 forward + fp32 grads"},
+				{ID: "torch-compile", Label: "Torch Compile", Desc: "graph-mode JIT compilation"},
 			},
 		}
 		return a, nil

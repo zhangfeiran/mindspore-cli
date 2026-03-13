@@ -107,6 +107,16 @@ var trainTextAliases = map[string]string{
 	"try a new technique": "add algo-feature mhc",
 	"improve accuracy":    "add algo-feature mhc",
 	"boost accuracy":      "add algo-feature mhc",
+	// perf-feature
+	"add fa2":             "add perf-feature fa2",
+	"flash attention":     "add perf-feature fa2",
+	"fused adam":          "add perf-feature fused-adam",
+	"gradient checkpoint": "add perf-feature gradient-ckpt",
+	"bf16":                "add perf-feature bf16-mixed",
+	"torch compile":       "add perf-feature torch-compile",
+	"add perf-feature":    "add perf-feature fa2",
+	"boost perf":          "add perf-feature fa2",
+	"optimize perf":       "add perf-feature fa2",
 	// stop
 	"cancel":              "stop",
 	"abort":               "stop",
@@ -421,6 +431,13 @@ func (a *Application) handleTrainInput(input string) {
 		}
 		a.addAlgoFeature(strings.TrimSpace(strings.TrimPrefix(lower, "add algo-feature")))
 
+	case strings.HasPrefix(lower, "add perf-feature"):
+		if snapshot.phase != "ready" && snapshot.phase != "completed" {
+			a.rejectCommand("add perf-feature", "workspace must be stable before perf-feature iteration")
+			return
+		}
+		a.addPerfFeature(strings.TrimSpace(strings.TrimPrefix(lower, "add perf-feature")))
+
 	case lower == "view diff":
 		a.viewDiff()
 
@@ -562,6 +579,41 @@ func (a *Application) addAlgoFeature(feature string) {
 				r.Target.Config = map[string]any{}
 			}
 			r.Target.Config["demo_trick_applied"] = true
+			a.trainReqs[a.trainCurrentRun] = r
+		}
+		a.trainMu.Unlock()
+	}()
+}
+
+func (a *Application) addPerfFeature(feature string) {
+	ctx, runID, req, _, ok := a.beginTrainTask("fixing")
+	if !ok {
+		return
+	}
+	go func() {
+		sink := func(ev wtrain.Event) {
+			a.convertAndEmitTrainEvent(runID, ev)
+		}
+		err := wtrain.RunSingleLanePerfFeature(ctx, req.Model, req.Method, feature, sink)
+		if err != nil && ctx.Err() == nil {
+			a.EventCh <- model.Event{
+				Type:    model.TrainError,
+				Message: fmt.Sprintf("perf-feature iteration failed: %v", err),
+			}
+			return
+		}
+		a.trainMu.Lock()
+		if a.trainReq != nil {
+			if a.trainReq.Target.Config == nil {
+				a.trainReq.Target.Config = map[string]any{}
+			}
+			a.trainReq.Target.Config["demo_perf_applied"] = true
+		}
+		if r, ok := a.trainReqs[a.trainCurrentRun]; ok {
+			if r.Target.Config == nil {
+				r.Target.Config = map[string]any{}
+			}
+			r.Target.Config["demo_perf_applied"] = true
 			a.trainReqs[a.trainCurrentRun] = r
 		}
 		a.trainMu.Unlock()

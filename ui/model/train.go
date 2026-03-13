@@ -813,6 +813,7 @@ func (s *TrainWorkspaceState) RefreshActions() {
 			{ID: "rerun", Label: "rerun", Enabled: true, Primary: true},
 			{ID: "analyze_perf", Label: "analyze perf", Enabled: true},
 			{ID: "add_algo_feature", Label: "algo-feature", Enabled: true},
+			{ID: "add_perf_feature", Label: "perf-feature", Enabled: true},
 		}
 		s.GlobalActions.Items = items
 	default:

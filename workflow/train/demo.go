@@ -470,6 +470,153 @@ func RunSingleLaneAlgoFeature(ctx context.Context, model, method, feature string
 	return nil
 }
 
+// RunSingleLanePerfFeature applies a performance feature and prepares for rerun.
+func RunSingleLanePerfFeature(ctx context.Context, model, method, feature string, sink func(Event)) error {
+	e := func(ev Event) bool { return emit(ctx, sink, withDefaultRunID(ev)) }
+
+	if feature == "" {
+		feature = "fa2"
+	}
+
+	featureNames := map[string]string{
+		"fa2":            "Flash Attention v2",
+		"fused-adam":     "Fused Adam",
+		"gradient-ckpt":  "Gradient Checkpointing",
+		"bf16-mixed":     "BF16 Mixed Precision",
+		"torch-compile":  "Torch Compile",
+	}
+	displayName := featureNames[feature]
+	if displayName == "" {
+		displayName = feature
+	}
+
+	if !e(Event{Kind: EventMessage, ActionSource: "perf-agent", Message: fmt.Sprintf("evaluating %s for %s %s...", displayName, model, method), DelayMs: 800}) {
+		return ctx.Err()
+	}
+
+	if !e(Event{Kind: EventMessage, ActionSource: "perf-agent", Message: fmt.Sprintf("%s selected. applying kernel-level optimization.", displayName), DelayMs: 800}) {
+		return ctx.Err()
+	}
+
+	if !e(Event{Kind: EventMessage, ActionSource: "perf-agent", Message: "patching training config and kernel registry...", DelayMs: 600}) {
+		return ctx.Err()
+	}
+
+	// Feature-specific diffs
+	var diffLines []struct {
+		msg     string
+		delayMs int
+	}
+
+	switch feature {
+	case "fa2":
+		diffLines = []struct {
+			msg     string
+			delayMs int
+		}{
+			{"--- a/configs/qwen3_lora.yaml", 300},
+			{"+++ b/configs/qwen3_lora.yaml", 200},
+			{"@@ -12,3 +12,5 @@", 200},
+			{" attention:", 150},
+			{"-  backend: \"default\"", 200},
+			{"+  backend: \"flash_attention_2\"", 200},
+			{"+  flash_attn_version: 2", 150},
+			{"+  use_sliding_window: True", 150},
+			{"", 400},
+			{"--- a/kernels/attn_registry.py", 300},
+			{"+++ b/kernels/attn_registry.py", 200},
+			{"@@ -8,2 +8,6 @@", 200},
+			{" ATTN_REGISTRY = {", 150},
+			{"+    \"flash_attention_2\": FlashAttnV2Kernel(", 200},
+			{"+        block_size=128,", 150},
+			{"+        causal=True,", 150},
+			{"+        softmax_scale=None,  # auto", 150},
+			{"+    ),", 100},
+			{"", 300},
+			{"2 files changed, 7 insertions(+), 1 deletion(-)", 500},
+		}
+	case "fused-adam":
+		diffLines = []struct {
+			msg     string
+			delayMs int
+		}{
+			{"--- a/configs/qwen3_lora.yaml", 300},
+			{"+++ b/configs/qwen3_lora.yaml", 200},
+			{"@@ -22,3 +22,4 @@", 200},
+			{" optimizer:", 150},
+			{"-  type: \"adam\"", 200},
+			{"+  type: \"fused_adam\"", 200},
+			{"+  fused_kernel: True  # Ascend 910B fused adam", 150},
+			{"", 300},
+			{"1 file changed, 2 insertions(+), 1 deletion(-)", 500},
+		}
+	case "gradient-ckpt":
+		diffLines = []struct {
+			msg     string
+			delayMs int
+		}{
+			{"--- a/configs/qwen3_lora.yaml", 300},
+			{"+++ b/configs/qwen3_lora.yaml", 200},
+			{"@@ -30,2 +30,4 @@", 200},
+			{" memory:", 150},
+			{"+  gradient_checkpointing: True", 200},
+			{"+  checkpoint_every_n_layers: 4", 150},
+			{"", 300},
+			{"1 file changed, 2 insertions(+)", 500},
+		}
+	case "bf16-mixed":
+		diffLines = []struct {
+			msg     string
+			delayMs int
+		}{
+			{"--- a/configs/qwen3_lora.yaml", 300},
+			{"+++ b/configs/qwen3_lora.yaml", 200},
+			{"@@ -6,3 +6,5 @@", 200},
+			{" precision:", 150},
+			{"-  dtype: \"fp16\"", 200},
+			{"+  dtype: \"bf16\"", 200},
+			{"+  mixed_precision: True", 150},
+			{"+  grad_dtype: \"fp32\"  # keep grads in fp32", 150},
+			{"", 300},
+			{"1 file changed, 3 insertions(+), 1 deletion(-)", 500},
+		}
+	default: // torch-compile
+		diffLines = []struct {
+			msg     string
+			delayMs int
+		}{
+			{"--- a/configs/qwen3_lora.yaml", 300},
+			{"+++ b/configs/qwen3_lora.yaml", 200},
+			{"@@ -2,2 +2,5 @@", 200},
+			{" runtime:", 150},
+			{"+  torch_compile: True", 200},
+			{"+  compile_backend: \"inductor\"", 150},
+			{"+  compile_mode: \"reduce-overhead\"", 150},
+			{"", 300},
+			{"1 file changed, 3 insertions(+)", 500},
+		}
+	}
+
+	for _, d := range diffLines {
+		if !e(Event{Kind: EventDiffLine, Message: d.msg, DelayMs: d.delayMs}) {
+			return ctx.Err()
+		}
+	}
+
+	if !e(Event{
+		Kind:         EventFixApplied,
+		IssueType:    "perf-feature",
+		ActionSource: "perf-agent",
+		FixSummary:   fmt.Sprintf("%s applied to %s %s", displayName, model, method),
+		Message:      "config patched. please rerun experiment.",
+		DelayMs:      1000,
+	}) {
+		return ctx.Err()
+	}
+
+	return nil
+}
+
 // ── Story 4: Single-lane performance recovery ────────────────
 
 // AnalyzeSingleLanePerf diagnoses a performance bottleneck for the single-lane flow.
