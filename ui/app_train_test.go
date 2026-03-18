@@ -14,7 +14,7 @@ func TestTrainFixActionClearsStaleButtonAndKeepsCompletionMessage(t *testing.T) 
 	next, _ := app.handleEvent(model.Event{
 		Type: model.TrainModeOpen,
 		Train: &model.TrainEventData{
-			RunID:    "run-1",
+			RunID:    "primary",
 			RawInput: "qwen3 lora",
 			Model:    "qwen3",
 			Method:   "lora",
@@ -26,7 +26,7 @@ func TestTrainFixActionClearsStaleButtonAndKeepsCompletionMessage(t *testing.T) 
 		Type:    model.TrainAnalysisReady,
 		Message: "Analysis complete. Ready to apply fix.",
 		Train: &model.TrainEventData{
-			RunID:       "run-1",
+			RunID:       "primary",
 			IssueType:   "failure",
 			ActionID:    "fix-dsa-op",
 			ActionKind:  "apply_patch",
@@ -43,14 +43,14 @@ func TestTrainFixActionClearsStaleButtonAndKeepsCompletionMessage(t *testing.T) 
 		Type:    model.TrainActionApplied,
 		Message: "op-agent: implementing DSA operator and compiling custom torch-npu...",
 		Train: &model.TrainEventData{
-			RunID:     "run-1",
+			RunID:     "primary",
 			IssueType: "failure",
 			ActionID:  "fix-dsa-op",
 		},
 	})
 	app = next.(App)
 
-	run := app.trainView.RunByID("run-1")
+	run := app.trainView.RunByID("primary")
 	if run == nil {
 		t.Fatal("expected primary run")
 	}
@@ -68,13 +68,13 @@ func TestTrainFixActionClearsStaleButtonAndKeepsCompletionMessage(t *testing.T) 
 		Type:    model.TrainFixApplied,
 		Message: "op-agent: DSA operator finished. New torch wheel is ready. Please rerun experiment.",
 		Train: &model.TrainEventData{
-			RunID:      "run-1",
+			RunID:      "primary",
 			FixSummary: "DSA operator implemented and torch-npu recompiled",
 		},
 	})
 	app = next.(App)
 
-	run = app.trainView.RunByID("run-1")
+	run = app.trainView.RunByID("primary")
 	if run == nil {
 		t.Fatal("expected primary run after fix")
 	}

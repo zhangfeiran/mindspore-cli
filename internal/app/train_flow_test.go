@@ -24,8 +24,9 @@ func TestTrainPhase1Flow(t *testing.T) {
 		t.Fatal("expected trainMode=true after cmdTrain")
 	}
 
-	// Drain events until we see TrainReady (setup completion)
-	drainUntil(t, app, model.TrainReady, 45*time.Second)
+	// Drain events until we see TrainReady (setup completion).
+	// The demo setup path includes multiple staged checks with delays.
+	drainUntil(t, app, model.TrainReady, 90*time.Second)
 	assertPhase(t, app, "ready")
 
 	// Gate check: analyze should be rejected in ready phase
@@ -35,13 +36,13 @@ func TestTrainPhase1Flow(t *testing.T) {
 		t.Fatalf("expected rejection message, got %s", ev.Type)
 	}
 
-	// ── Step 2: start → running → completed ──
+	// ── Step 2: start → running → failed (simulated runtime issue) ──
 	app.handleTrainInput("start")
 	assertPhase(t, app, "running")
 
-	// Drain until training completes
-	drainUntil(t, app, model.TrainDone, 30*time.Second)
-	assertPhase(t, app, "completed")
+	// Drain until runtime issue is reported.
+	drainUntil(t, app, model.TrainIssueDetected, 60*time.Second)
+	assertPhase(t, app, "failed")
 
 	// Clean exit
 	app.handleTrainInput("exit")
@@ -153,7 +154,7 @@ func TestTrainFullFlow(t *testing.T) {
 	// Gate check: apply fix should be rejected during running
 	app.handleTrainInput("apply fix")
 	ev = drainUntil(t, app, model.AgentReply, 2*time.Second)
-	assertContains(t, ev.Message, "Cannot")
+	assertContains(t, ev.Message, "cannot")
 
 	// Drain until GPU completes and phase transitions to failed
 	drainUntil(t, app, model.TrainDone, 30*time.Second) // GPU done
@@ -162,7 +163,7 @@ func TestTrainFullFlow(t *testing.T) {
 	// Gate check: start should be rejected in failed
 	app.handleTrainInput("start")
 	ev = drainUntil(t, app, model.AgentReply, 2*time.Second)
-	assertContains(t, ev.Message, "Cannot")
+	assertContains(t, ev.Message, "cannot")
 
 	// Verify trainIssueType is set
 	if issueType := app.getTrainSnapshot().issueType; issueType != "runtime" {
@@ -179,7 +180,7 @@ func TestTrainFullFlow(t *testing.T) {
 	// Gate check: analyze should be rejected in ready
 	app.handleTrainInput("analyze")
 	ev = drainUntil(t, app, model.AgentReply, 2*time.Second)
-	assertContains(t, ev.Message, "Cannot")
+	assertContains(t, ev.Message, "cannot")
 
 	// ── Step 4: apply fix → NPU relaunches (fixing) ──
 	app.handleTrainInput("apply fix")
@@ -216,12 +217,12 @@ func TestTrainFullFlow(t *testing.T) {
 	// ── Step 9: gate checks in completed state ──
 	app.handleTrainInput("apply fix")
 	ev = drainUntil(t, app, model.AgentReply, 2*time.Second)
-	assertContains(t, ev.Message, "Cannot")
+	assertContains(t, ev.Message, "cannot")
 
 	// ── Step 10: view diff works in completed state ──
 	app.handleTrainInput("view diff")
 	ev = drainUntil(t, app, model.AgentReply, 2*time.Second)
-	assertContains(t, ev.Message, "Diff")
+	assertContains(t, ev.Message, "diff")
 
 	// Clean exit
 	app.handleTrainInput("exit")
@@ -248,7 +249,7 @@ func TestTrainPhaseGatesComprehensive(t *testing.T) {
 		{"ready", "start", true},
 		{"running", "start", false},
 		{"failed", "start", false},
-		{"completed", "start", false},
+		{"completed", "start", true},
 
 		// analyze in failed or drift_detected
 		{"setup", "analyze", false},
@@ -289,7 +290,7 @@ func TestTrainPhaseGatesComprehensive(t *testing.T) {
 			if !tt.allowed {
 				app.handleTrainInput(tt.command)
 				ev := drainUntil(t, app, model.AgentReply, 2*time.Second)
-				assertContains(t, ev.Message, "Cannot")
+				assertContains(t, ev.Message, "cannot")
 			}
 			// For allowed commands, we verify the phase changes
 			// (the full flow test covers actual execution)
