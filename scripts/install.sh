@@ -53,35 +53,39 @@ chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 echo ""
 echo "Installed ms-cli ${LATEST} to ${INSTALL_DIR}/${BINARY_NAME}"
 
-# Auto-add to PATH if not already present.
+# Auto-add to PATH.
 PATH_LINE="export PATH=\"${INSTALL_DIR}:\$PATH\""
-if echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR" 2>/dev/null; then
-  echo ""
-  echo "Run: mscli"
-else
-  # Detect shell profile.
-  SHELL_NAME="$(basename "$SHELL" 2>/dev/null || echo bash)"
-  case "$SHELL_NAME" in
-    zsh)  PROFILE="$HOME/.zshrc" ;;
-    bash)
-      if [ -f "$HOME/.bash_profile" ]; then
-        PROFILE="$HOME/.bash_profile"
-      else
-        PROFILE="$HOME/.bashrc"
-      fi
-      ;;
-    *)    PROFILE="$HOME/.profile" ;;
-  esac
 
-  if [ -f "$PROFILE" ] && grep -qF "$INSTALL_DIR" "$PROFILE" 2>/dev/null; then
+# Detect shell profile.
+CURRENT_SHELL="$(basename "${SHELL:-bash}")"
+case "$CURRENT_SHELL" in
+  zsh)  PROFILE="$HOME/.zshrc" ;;
+  bash)
+    if [ -f "$HOME/.bash_profile" ]; then
+      PROFILE="$HOME/.bash_profile"
+    else
+      PROFILE="$HOME/.bashrc"
+    fi
+    ;;
+  *)    PROFILE="$HOME/.profile" ;;
+esac
+
+# Add to profile if not already there.
+case ":${PATH}:" in
+  *":${INSTALL_DIR}:"*)
     echo ""
-    echo "PATH already configured in ${PROFILE}"
     echo "Run: mscli"
-  else
-    echo "$PATH_LINE" >> "$PROFILE"
-    echo ""
-    echo "Added ms-cli to PATH in ${PROFILE}"
-    echo ""
-    echo "Run: source ${PROFILE} && mscli"
-  fi
-fi
+    ;;
+  *)
+    if [ -f "$PROFILE" ] && grep -qF "$INSTALL_DIR" "$PROFILE" 2>/dev/null; then
+      echo ""
+      echo "PATH already configured in ${PROFILE}"
+      echo "Run: source ${PROFILE} && mscli"
+    else
+      echo "$PATH_LINE" >> "$PROFILE"
+      echo ""
+      echo "Added ms-cli to PATH in ${PROFILE}"
+      echo "Run: source ${PROFILE} && mscli"
+    fi
+    ;;
+esac
