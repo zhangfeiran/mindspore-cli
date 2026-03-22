@@ -25,6 +25,16 @@ func RoleFromContext(ctx context.Context) string {
 	return v
 }
 
+func AdminOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if RoleFromContext(r.Context()) != "admin" {
+			http.Error(w, `{"error":"admin role required"}`, http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func AuthMiddleware(tokens []configs.TokenEntry, next http.Handler) http.Handler {
 	lookup := make(map[string]configs.TokenEntry, len(tokens))
 	for _, t := range tokens {

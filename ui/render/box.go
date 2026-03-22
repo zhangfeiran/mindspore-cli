@@ -11,7 +11,7 @@ var (
 			Foreground(lipgloss.Color("244"))
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("39"))
+			Foreground(lipgloss.Color("15"))
 	LabelStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244"))
 	ValueStyle = lipgloss.NewStyle().

@@ -113,8 +113,6 @@ type App struct {
 	// Train mode
 	trainView   model.TrainViewState
 	trainFocus  model.TrainPanelID
-	projectView model.ProjectViewState
-
 	bootActive    bool
 	bootHighlight int
 	queuedInputs  []string
@@ -255,12 +253,18 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Check if we're in slash suggestion mode
 	if a.input.IsSlashMode() {
 		switch msg.String() {
-		case "tab", "enter", "esc":
-			// Let input handle these for suggestion navigation
+		case "tab", "esc":
 			var cmd tea.Cmd
 			a.input, cmd = a.input.Update(msg)
 			a.resizeActiveLayout()
 			return a, cmd
+		case "up", "down":
+			// Only capture for suggestions if there are visible candidates
+			if a.input.HasSuggestions() {
+				var cmd tea.Cmd
+				a.input, cmd = a.input.Update(msg)
+				return a, cmd
+			}
 		}
 	}
 
@@ -371,7 +375,9 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Reset stats for new task
 		a.state = a.state.ResetStats()
 		a.state = a.state.WithThinking(false)
-		a.state = a.state.WithMessage(model.Message{Kind: model.MsgUser, Content: val})
+		if !strings.HasPrefix(val, "/") {
+			a.state = a.state.WithMessage(model.Message{Kind: model.MsgUser, Content: val})
+		}
 		a.input = a.input.PushHistory(val)
 		a.input = a.input.Reset()
 		a.resizeActiveLayout()
@@ -571,28 +577,18 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		mi.Name = ev.Message
 		a.state = a.state.WithModel(mi)
 
+	case model.IssueUserUpdate:
+		a.state = a.state.WithIssueUser(ev.Message)
+
 	// ── Train events ──────────────────────────────────────────
 
 	case model.TrainModeOpen:
-		a.projectView.Active = false
 		a.handleTrainModeOpen(ev)
 
 	case model.TrainModeClose:
 		a.trainView = model.TrainViewState{}
 		a.trainFocus = model.TrainPanelActions
 		a.input, _ = a.input.Focus()
-		a.resizeActiveLayout()
-
-	case model.ProjectModeOpen:
-		if ev.Project != nil {
-			a.projectView.Status = *ev.Project
-		}
-		a.projectView.Active = true
-		a.trainView.Active = false
-		a.resizeActiveLayout()
-
-	case model.ProjectModeClose:
-		a.projectView = model.ProjectViewState{}
 		a.resizeActiveLayout()
 
 	case model.TrainSetup:
@@ -1894,6 +1890,13 @@ func (a *App) updateViewport() {
 		width = 1
 	}
 	content := panels.RenderMessages(a.state, a.thinking.View(), width, a.trainView.Active)
+	// Pad content so it's bottom-anchored (like CC/Codex).
+	contentLines := strings.Count(content, "\n") + 1
+	viewHeight := a.viewport.Model.Height
+	if contentLines < viewHeight && content != "" {
+		padding := strings.Repeat("\n", viewHeight-contentLines)
+		content = padding + content
+	}
 	a.viewport = a.viewport.SetContent(content)
 	// Only auto-scroll to bottom if user hasn't scrolled up.
 	if atBottom {
@@ -1902,9 +1905,6 @@ func (a *App) updateViewport() {
 }
 
 func (a App) activeHUDHeight() int {
-	if a.projectView.Active {
-		return lipgloss.Height(panels.RenderProjectHUD(a.projectView.Status, a.width))
-	}
 	if a.trainView.Active {
 		return lipgloss.Height(panels.RenderTrainHUD(a.trainView, a.width, a.agentStatus()))
 	}
@@ -1932,10 +1932,7 @@ func (a App) View() string {
 	hintBar := panels.RenderHintBar(a.width)
 
 	parts := []string{topBar}
-	if a.projectView.Active {
-		parts = append(parts, panels.RenderProjectHUD(a.projectView.Status, a.width))
-		hintBar = panels.RenderProjectHUDHintBar(a.width)
-	} else if a.trainView.Active {
+	if a.trainView.Active {
 		parts = append(parts, panels.RenderTrainHUD(a.trainView, a.width, a.agentStatus()))
 		hintBar = panels.RenderTrainHUDHintBar(a.width)
 	}

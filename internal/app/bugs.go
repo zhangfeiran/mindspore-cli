@@ -25,7 +25,7 @@ func (a *Application) cmdReport(args []string) {
 	}
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
-		Message: fmt.Sprintf("created BUG-%d: %s", bug.ID, bug.Title),
+		Message: fmt.Sprintf("created bug #%d: %s", bug.ID, bug.Title),
 	}
 }
 
@@ -71,7 +71,7 @@ func (a *Application) cmdClaim(args []string) {
 	}
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
-		Message: fmt.Sprintf("you claimed BUG-%d", id),
+		Message: fmt.Sprintf("you claimed bug #%d", id),
 	}
 }
 

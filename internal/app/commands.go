@@ -9,7 +9,6 @@ import (
 	"github.com/vigo999/ms-cli/integrations/llm"
 	providerpkg "github.com/vigo999/ms-cli/integrations/llm/provider"
 	"github.com/vigo999/ms-cli/integrations/skills"
-	"github.com/vigo999/ms-cli/internal/project"
 	"github.com/vigo999/ms-cli/permission"
 	"github.com/vigo999/ms-cli/ui/model"
 )
@@ -21,10 +20,6 @@ func (a *Application) handleCommand(input string) {
 	}
 
 	switch parts[0] {
-	case "/roadmap":
-		a.cmdRoadmap(parts[1:])
-	case "/weekly":
-		a.cmdWeekly(parts[1:])
 	case "/model":
 		a.cmdModel(parts[1:])
 	case "/exit":
@@ -71,64 +66,6 @@ func (a *Application) handleCommand(input string) {
 			Message: fmt.Sprintf("Unknown command: %s. Type /help for available commands.", parts[0]),
 		}
 	}
-}
-
-func (a *Application) cmdRoadmap(args []string) {
-	if len(args) == 0 || args[0] != "status" {
-		a.EventCh <- model.Event{
-			Type:    model.AgentReply,
-			Message: "Usage: /roadmap status [path] (default: roadmap.yaml)",
-		}
-		return
-	}
-
-	path := "roadmap.yaml"
-	if len(args) > 1 {
-		path = args[1]
-	}
-
-	a.EventCh <- model.Event{Type: model.AgentThinking}
-
-	rm, err := project.LoadRoadmapFromFile(path)
-	if err != nil {
-		a.EventCh <- model.Event{Type: model.ToolError, ToolName: "roadmap", Message: err.Error()}
-		return
-	}
-
-	status, err := project.ComputeRoadmapStatus(rm, time.Now())
-	if err != nil {
-		a.EventCh <- model.Event{Type: model.ToolError, ToolName: "roadmap", Message: err.Error()}
-		return
-	}
-
-	data, _ := json.MarshalIndent(status, "", "  ")
-	a.EventCh <- model.Event{Type: model.AgentReply, Message: string(data)}
-}
-
-func (a *Application) cmdWeekly(args []string) {
-	if len(args) == 0 || args[0] != "status" {
-		a.EventCh <- model.Event{
-			Type:    model.AgentReply,
-			Message: "Usage: /weekly status [path] (default: weekly.md)",
-		}
-		return
-	}
-
-	path := "weekly.md"
-	if len(args) > 1 {
-		path = args[1]
-	}
-
-	a.EventCh <- model.Event{Type: model.AgentThinking}
-
-	wu, err := project.LoadWeeklyUpdateFromFile(path)
-	if err != nil {
-		a.EventCh <- model.Event{Type: model.ToolError, ToolName: "weekly", Message: err.Error()}
-		return
-	}
-
-	data, _ := json.MarshalIndent(wu, "", "  ")
-	a.EventCh <- model.Event{Type: model.AgentReply, Message: string(data)}
 }
 
 func (a *Application) cmdModel(args []string) {
@@ -416,17 +353,15 @@ func (a *Application) cmdHelp() {
   /skill [name] [request] Load and run a skill (e.g. /skill pdf extract text from report.pdf)
   /train <model> <method> Start train workflow (e.g. /train qwen3 lora)
   /train <action>         Control active train HUD (start, stop, analyze, apply fix, retry, view diff, exit)
-  /project [status]        Show a formatted project status snapshot in the chat stream
-  /project add ...         Add a task to docs/project.yaml
-  /project update ...      Update a task in docs/project.yaml
-  /project rm ...          Remove a task from docs/project.yaml
-  /login <url> <token>    Log in to the bug server
+  /project [status]        Show project status snapshot (server + git status)
+  /project add <section> "<title>" [--owner o] [--progress p]  Add a task
+  /project update <section> <id> [--title t] [--owner o] [--progress p] [--status s]  Update a task
+  /project rm <section> <id>  Remove a task
+  /login <token>          Log in to the bug server
   /report <title>         Report a new bug
   /bugs [status]          List bugs (optional status filter: open, doing)
   /claim <id>             Claim a bug as your lead
   /dock                   Show bug dashboard (open count, ready, recent)
-  /roadmap status [path]  Check roadmap status (default: roadmap.yaml)
-  /weekly status [path]   Check weekly update status (default: weekly.md)
   /model [model-name]     Show or switch model
   /test                   Test API connectivity
   /permission [tool] [level]  Manage tool permissions

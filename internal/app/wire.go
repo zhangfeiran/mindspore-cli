@@ -17,6 +17,7 @@ import (
 	providerpkg "github.com/vigo999/ms-cli/integrations/llm/provider"
 	"github.com/vigo999/ms-cli/integrations/skills"
 	"github.com/vigo999/ms-cli/internal/issues"
+	projectpkg "github.com/vigo999/ms-cli/internal/project"
 	itrain "github.com/vigo999/ms-cli/internal/train"
 	"github.com/vigo999/ms-cli/internal/version"
 	"github.com/vigo999/ms-cli/permission"
@@ -55,6 +56,10 @@ type Application struct {
 	// Issue/bug tracking
 	issueService *issues.Service
 	issueUser    string
+	issueRole    string
+
+	// Project tracking
+	projectService *projectpkg.Service
 
 	// Train mode state
 	trainMode       bool
@@ -178,7 +183,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	permService := permission.NewDefaultPermissionService(config.Permissions)
 	engine.SetPermissionService(permService)
 
-	return &Application{
+	app := &Application{
 		Engine:       engine,
 		EventCh:      make(chan model.Event, 64),
 		WorkDir:      workDir,
@@ -191,7 +196,17 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		traceWriter:  traceWriter,
 		llmReady:     llmReady,
 		skillLoader:  skillLoader,
-	}, nil
+	}
+
+	// Auto-login from saved credentials.
+	if cred, err := loadCredentials(); err == nil {
+		app.issueService = issues.NewService(issues.NewRemoteStore(cred.ServerURL, cred.Token))
+		app.projectService = projectpkg.NewService(projectpkg.NewRemoteStore(cred.ServerURL, cred.Token))
+		app.issueUser = cred.User
+		app.issueRole = cred.Role
+	}
+
+	return app, nil
 }
 
 // SetProvider updates model/key and reinitializes the engine.

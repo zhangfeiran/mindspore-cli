@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/vigo999/ms-cli/internal/issues"
+	"github.com/vigo999/ms-cli/internal/project"
 )
 
 type Store struct {
@@ -45,6 +46,28 @@ func (s *Store) migrate() error {
 			type       TEXT    NOT NULL,
 			text       TEXT    NOT NULL DEFAULT '',
 			created_at TEXT    NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS project_overview (
+			id         INTEGER PRIMARY KEY CHECK (id = 1),
+			phase      TEXT NOT NULL DEFAULT '',
+			owner      TEXT NOT NULL DEFAULT '',
+			repo       TEXT NOT NULL DEFAULT '',
+			branch     TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`,
+		`INSERT OR IGNORE INTO project_overview (id, phase, owner, repo, branch, updated_at)
+		 VALUES (1, '', '', '', '', datetime('now'))`,
+		`CREATE TABLE IF NOT EXISTS project_tasks (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			section     TEXT    NOT NULL DEFAULT 'tasks',
+			title       TEXT    NOT NULL,
+			status      TEXT    NOT NULL DEFAULT 'todo',
+			progress    INTEGER NOT NULL DEFAULT 0,
+			owner       TEXT    NOT NULL DEFAULT '',
+			due         TEXT    NOT NULL DEFAULT '',
+			created_by  TEXT    NOT NULL,
+			created_at  TEXT    NOT NULL,
+			updated_at  TEXT    NOT NULL
 		)`,
 	}
 	for _, stmt := range stmts {
@@ -220,4 +243,148 @@ func (s *Store) DockSummary() (*issues.DockData, error) {
 		ReadyBugs:  readyBugs,
 		RecentFeed: feed,
 	}, nil
+}
+
+// --- Project methods ---
+
+func (s *Store) GetProjectSnapshot() (*project.Snapshot, error) {
+	var ov project.Overview
+	err := s.db.QueryRow(`SELECT phase, owner, repo, branch FROM project_overview WHERE id = 1`).
+		Scan(&ov.Phase, &ov.Owner, &ov.Repo, &ov.Branch)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, section, title, status, progress, owner, due, created_by, created_at, updated_at
+		 FROM project_tasks ORDER BY id ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tasks []project.Task
+	for rows.Next() {
+		var t project.Task
+		var createdAt, updatedAt string
+		if err := rows.Scan(&t.ID, &t.Section, &t.Title, &t.Status, &t.Progress, &t.Owner, &t.Due, &t.CreatedBy, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		t.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if tasks == nil {
+		tasks = []project.Task{}
+	}
+	return &project.Snapshot{Overview: ov, Tasks: tasks}, nil
+}
+
+func (s *Store) CreateProjectTask(section, title, owner, createdBy, due string, progress *int) (*project.Task, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	prog := 0
+	if progress != nil {
+		prog = *progress
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO project_tasks (section, title, status, progress, owner, due, created_by, created_at, updated_at)
+		 VALUES (?, ?, 'todo', ?, ?, ?, ?, ?, ?)`,
+		section, title, prog, owner, due, createdBy, now, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	return s.getProjectTask(int(id))
+}
+
+func (s *Store) UpdateProjectTask(id int, title, owner, status, due *string, progress *int) (*project.Task, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if title != nil {
+		if _, err := s.db.Exec(`UPDATE project_tasks SET title = ?, updated_at = ? WHERE id = ?`, *title, now, id); err != nil {
+			return nil, err
+		}
+	}
+	if owner != nil {
+		if _, err := s.db.Exec(`UPDATE project_tasks SET owner = ?, updated_at = ? WHERE id = ?`, *owner, now, id); err != nil {
+			return nil, err
+		}
+	}
+	if status != nil {
+		if _, err := s.db.Exec(`UPDATE project_tasks SET status = ?, updated_at = ? WHERE id = ?`, *status, now, id); err != nil {
+			return nil, err
+		}
+	}
+	if due != nil {
+		if _, err := s.db.Exec(`UPDATE project_tasks SET due = ?, updated_at = ? WHERE id = ?`, *due, now, id); err != nil {
+			return nil, err
+		}
+	}
+	if progress != nil {
+		if _, err := s.db.Exec(`UPDATE project_tasks SET progress = ?, updated_at = ? WHERE id = ?`, *progress, now, id); err != nil {
+			return nil, err
+		}
+	}
+	return s.getProjectTask(id)
+}
+
+func (s *Store) DeleteProjectTask(id int) error {
+	res, err := s.db.Exec(`DELETE FROM project_tasks WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("task %d not found", id)
+	}
+	return nil
+}
+
+func (s *Store) UpdateProjectOverview(phase, owner, repo, branch string) (*project.Overview, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if phase != "" {
+		if _, err := s.db.Exec(`UPDATE project_overview SET phase = ?, updated_at = ? WHERE id = 1`, phase, now); err != nil {
+			return nil, err
+		}
+	}
+	if owner != "" {
+		if _, err := s.db.Exec(`UPDATE project_overview SET owner = ?, updated_at = ? WHERE id = 1`, owner, now); err != nil {
+			return nil, err
+		}
+	}
+	if repo != "" {
+		if _, err := s.db.Exec(`UPDATE project_overview SET repo = ?, updated_at = ? WHERE id = 1`, repo, now); err != nil {
+			return nil, err
+		}
+	}
+	if branch != "" {
+		if _, err := s.db.Exec(`UPDATE project_overview SET branch = ?, updated_at = ? WHERE id = 1`, branch, now); err != nil {
+			return nil, err
+		}
+	}
+	var ov project.Overview
+	err := s.db.QueryRow(`SELECT phase, owner, repo, branch FROM project_overview WHERE id = 1`).
+		Scan(&ov.Phase, &ov.Owner, &ov.Repo, &ov.Branch)
+	if err != nil {
+		return nil, err
+	}
+	return &ov, nil
+}
+
+func (s *Store) getProjectTask(id int) (*project.Task, error) {
+	var t project.Task
+	var createdAt, updatedAt string
+	err := s.db.QueryRow(
+		`SELECT id, section, title, status, progress, owner, due, created_by, created_at, updated_at
+		 FROM project_tasks WHERE id = ?`, id,
+	).Scan(&t.ID, &t.Section, &t.Title, &t.Status, &t.Progress, &t.Owner, &t.Due, &t.CreatedBy, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	t.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	return &t, nil
 }

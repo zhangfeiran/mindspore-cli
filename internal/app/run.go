@@ -55,6 +55,11 @@ func (a *Application) runReal() error {
 	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.MaxTokens)
 	p := tea.NewProgram(tui, tea.WithAltScreen())
 
+	// Emit saved login so the topbar shows the user immediately.
+	if a.issueUser != "" {
+		a.EventCh <- model.Event{Type: model.IssueUserUpdate, Message: a.issueUser}
+	}
+
 	go a.inputLoop(userCh)
 
 	_, err := p.Run()

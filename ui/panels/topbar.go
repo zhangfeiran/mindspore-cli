@@ -62,8 +62,11 @@ func RenderTopBar(s model.State, width int) string {
 
 	divider := dividerStyle.Render(repeatChar("━", width))
 
-	// Line 2: workdir + repo
+	// Line 2: workdir + user + repo
 	left2 := bannerLabelStyle.Render("cwd:") + " " + bannerValueStyle.Render(shortenPath(s.WorkDir))
+	if s.IssueUser != "" {
+		left2 += " " + bannerLabelStyle.Render("user:") + " " + bannerValueStyle.Render(s.IssueUser)
+	}
 	right2 := bannerDimStyle.Render(s.RepoURL)
 
 	gap2 := width - lipgloss.Width(left2) - lipgloss.Width(right2) - 2

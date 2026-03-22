@@ -1,116 +1,113 @@
 package app
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"github.com/vigo999/ms-cli/internal/project"
 	"github.com/vigo999/ms-cli/ui/model"
 )
+
+// mockProjectStore implements project.Store for testing.
+type mockProjectStore struct {
+	snapshot *project.Snapshot
+	tasks    []project.Task
+	nextID   int
+}
+
+func newMockProjectStore() *mockProjectStore {
+	return &mockProjectStore{
+		snapshot: &project.Snapshot{
+			Overview: project.Overview{},
+			Tasks:    []project.Task{},
+		},
+		nextID: 1,
+	}
+}
+
+func (m *mockProjectStore) GetSnapshot() (*project.Snapshot, error) {
+	snap := &project.Snapshot{
+		Overview: m.snapshot.Overview,
+		Tasks:    make([]project.Task, len(m.tasks)),
+	}
+	copy(snap.Tasks, m.tasks)
+	return snap, nil
+}
+
+func (m *mockProjectStore) CreateTask(section, title, owner, createdBy, due string, progress *int) (*project.Task, error) {
+	prog := 0
+	if progress != nil {
+		prog = *progress
+	}
+	t := project.Task{
+		ID:        m.nextID,
+		Section:   section,
+		Title:     title,
+		Status:    "todo",
+		Progress:  prog,
+		Owner:     owner,
+		Due:       due,
+		CreatedBy: createdBy,
+	}
+	m.nextID++
+	m.tasks = append(m.tasks, t)
+	return &t, nil
+}
+
+func (m *mockProjectStore) UpdateTask(id int, title, owner, status, due *string, progress *int) (*project.Task, error) {
+	for i := range m.tasks {
+		if m.tasks[i].ID == id {
+			if title != nil {
+				m.tasks[i].Title = *title
+			}
+			if owner != nil {
+				m.tasks[i].Owner = *owner
+			}
+			if status != nil {
+				m.tasks[i].Status = *status
+			}
+			if progress != nil {
+				m.tasks[i].Progress = *progress
+			}
+			t := m.tasks[i]
+			return &t, nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *mockProjectStore) DeleteTask(id int) error {
+	for i := range m.tasks {
+		if m.tasks[i].ID == id {
+			m.tasks = append(m.tasks[:i], m.tasks[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *mockProjectStore) UpdateOverview(phase, owner, repo, branch string) (*project.Overview, error) {
+	if phase != "" {
+		m.snapshot.Overview.Phase = phase
+	}
+	if owner != "" {
+		m.snapshot.Overview.Owner = owner
+	}
+	if repo != "" {
+		m.snapshot.Overview.Repo = repo
+	}
+	if branch != "" {
+		m.snapshot.Overview.Branch = branch
+	}
+	ov := m.snapshot.Overview
+	return &ov, nil
+}
 
 func TestCmdProjectStreamsFormattedSnapshot(t *testing.T) {
 	orig := runProjectGit
 	defer func() { runProjectGit = orig }()
 
 	root := t.TempDir()
-	err := os.MkdirAll(filepath.Join(root, "docs"), 0o755)
-	if err != nil {
-		t.Fatalf("mkdir docs: %v", err)
-	}
-	err = os.WriteFile(filepath.Join(root, "docs", "project.yaml"), []byte(`top_msg: this is custom project status
-top_msg_color: white
-
-overview:
-  color: dark_green
-  phase: refactor / dogfood
-  owner: travis
-  focus: status command
-progress_pct: 78
-today_tasks:
-  color: dark_green
-  date: 2026-03-19
-  items:
-    - title: project status command resumed
-      color: dark_green
-      status: done
-      progress: 100
-      progress_color: green
-      empty_color: gray
-      owner: travis
-      due-date: 2026-03-21
-    - title: status schema draft
-      color: dark_green
-      status: doing
-      progress: 60
-      progress_color: yellow
-      empty_color: gray
-      owner: verylongowner
-      due-date: 2026-03-22
-    - title: collector wiring blocked on schema
-      color: dark_green
-      status: block
-      progress: 25
-      progress_color: red
-      empty_color: gray
-      owner: alice
-      due-date: 2026-03-23
-tomorrow:
-  color: dark_green
-  items:
-    - title: define schema
-      color: dark_green
-      progress: 0
-      progress_color: cyan
-      empty_color: gray
-      owner: travis
-    - title: implement collector
-      color: dark_green
-      progress: 20
-      progress_color: cyan
-      empty_color: gray
-      owner: travis
-    - title: add renderer
-      color: dark_green
-      progress: 40
-      progress_color: cyan
-      empty_color: gray
-      owner: travis
-milestone:
-  color: dark_green
-  items:
-    - title: stream card v1
-      color: dark_green
-      progress: 78
-      progress_color: magenta
-      empty_color: gray
-      owner: travis
-`), 0o644)
-	if err != nil {
-		t.Fatalf("write project.yaml: %v", err)
-	}
-	err = os.WriteFile(filepath.Join(root, "roadmap.yaml"), []byte(`version: 1
-target_date: "2026-06-30"
-phases:
-  - id: "phase1"
-    name: "Foundation"
-    start: "2026-03-01"
-    end: "2026-03-31"
-    milestones:
-      - id: "p1-arch"
-        title: "Architecture analysis and development plan"
-        status: "done"
-      - id: "p1-llm"
-        title: "LLM Provider architecture"
-        status: "in_progress"
-      - id: "p1-config"
-        title: "Configuration management system"
-        status: "pending"
-`), 0o644)
-	if err != nil {
-		t.Fatalf("write roadmap: %v", err)
-	}
 
 	runProjectGit = func(workDir string, args ...string) (string, error) {
 		switch strings.Join(args, " ") {
@@ -128,103 +125,36 @@ phases:
 		}
 	}
 
+	store := newMockProjectStore()
+	store.snapshot.Overview = project.Overview{Phase: "refactor", Owner: "travis", Repo: "github.com/vigo999/ms-cli", Branch: "refactor-arch-4.2"}
+	store.tasks = []project.Task{
+		{ID: 1, Section: "tasks", Title: "project status command", Status: "done", Progress: 100, Owner: "travis"},
+		{ID: 2, Section: "tasks", Title: "status schema draft", Status: "doing", Progress: 60, Owner: "alice"},
+		{ID: 3, Section: "tomorrow", Title: "define schema", Status: "todo", Progress: 0, Owner: "travis"},
+	}
+
 	app := &Application{
-		WorkDir: root,
-		EventCh: make(chan model.Event, 8),
+		WorkDir:        root,
+		EventCh:        make(chan model.Event, 8),
+		projectService: project.NewService(store),
 	}
 
 	app.cmdProject(nil)
 
 	ev := drainUntilEventType(t, app, model.AgentReply)
 	for _, want := range []string{
-		applyProjectStyle("this is custom project status", "white", true),
-		applyProjectStyle("[ OVERVIEW ]", "white", true),
-		applyProjectStyle("[ TODAY TASKS ]", "white", true),
-		"[2026-03-19]",
-		"phase: refactor / dogfood",
+		"project status",
+		"phase: refactor",
 		"owner: travis",
-		"focus: status command",
-		applyProjectStyle("[ PROGRESS PCT ]", "white", true),
-		"  78",
-		applyProjectStyle("[ TOMORROW ]", "white", true),
-		applyProjectStyle("[ 🚀 MILESTONE ]", "white", true),
-		"project status command resumed",
-		applyProjectStyle("✓", "green", false),
+		"repo: github.com/vigo999/ms-cli",
+		"branch: refactor-arch-4.2",
+		"project status command",
 		"status schema draft",
-		"collector wiring blocked on schema",
-		"due-date: 2026-03-21",
-		"due-date: 2026-03-22",
-		"due-date: 2026-03-23",
 		"define schema",
-		"implement collector",
-		applyProjectStyle("stream card v1", "magenta", false),
-		applyProjectStyle("100%", "green", false) + "  owner: travis",
-		applyProjectStyle(" 60%", "yellow", false) + "  owner: verylongowner",
-		applyProjectStyle(" 25%", "red", false) + "  owner: alice",
-		applyProjectStyle("  0%", "cyan", false) + "  owner: travis",
-		applyProjectStyle(" 20%", "cyan", false) + "  owner: travis",
-		applyProjectStyle(" 78%", "magenta", false) + "  owner: travis",
+		"╭", "│", "╰",
 	} {
 		if !strings.Contains(ev.Message, want) {
 			t.Fatalf("expected project snapshot to contain %q, got:\n%s", want, ev.Message)
-		}
-	}
-	if !strings.Contains(ev.Message, "\x1b[") {
-		t.Fatalf("expected styled project output, got:\n%s", ev.Message)
-	}
-	if !strings.Contains(ev.Message, applyProjectStyle("this is custom project status", "white", true)) {
-		t.Fatalf("expected colored top message, got:\n%s", ev.Message)
-	}
-	for _, want := range []string{
-		applyProjectStyle("[ OVERVIEW ]", "white", true),
-		"\x1b[38;5;34m■\x1b[0m",
-		applyProjectStyle("✓", "green", false),
-		"○",
-		"!",
-		"▶",
-		applyProjectStyle("100%", "green", false),
-		applyProjectStyle(" 60%", "yellow", false),
-		applyProjectStyle(" 25%", "red", false),
-		applyProjectStyle(" 78%", "magenta", false),
-		"\x1b[38;5;201m■\x1b[0m",
-		"\x1b[38;5;220m■\x1b[0m",
-		"\x1b[38;5;196m■\x1b[0m",
-		"\x1b[38;5;244m□\x1b[0m",
-	} {
-		if !strings.Contains(ev.Message, want) {
-			t.Fatalf("expected progress bar color fragment %q, got:\n%s", want, ev.Message)
-		}
-	}
-	for _, unwanted := range []string{
-		applyProjectStyle(" 60%", "green", false),
-		applyProjectStyle(" 25%", "green", false),
-	} {
-		if strings.Contains(ev.Message, unwanted) {
-			t.Fatalf("expected project snapshot to avoid forced green partial progress %q, got:\n%s", unwanted, ev.Message)
-		}
-	}
-	if strings.Contains(ev.Message, "week goals") {
-		t.Fatalf("expected removed yaml section to stay removed, got:\n%s", ev.Message)
-	}
-	if !strings.Contains(ev.Message, "╭") || !strings.Contains(ev.Message, "│") || !strings.Contains(ev.Message, "╰") {
-		t.Fatalf("expected boxed project snapshot, got:\n%s", ev.Message)
-	}
-	var dueIndices []int
-	for _, line := range strings.Split(ev.Message, "\n") {
-		if strings.Contains(line, "due-date: 2026-03-2") {
-			idx := strings.Index(line, "due-date:")
-			if idx < 0 {
-				t.Fatalf("expected due-date line to contain due-date label, got %q", line)
-			}
-			dueIndices = append(dueIndices, lipgloss.Width(line[:idx]))
-		}
-	}
-	if len(dueIndices) != 3 {
-		t.Fatalf("expected three due-date task rows, got %d in:\n%s", len(dueIndices), ev.Message)
-	}
-	for i := 1; i < len(dueIndices); i++ {
-		if dueIndices[i] != dueIndices[0] {
-			t.Fatalf("expected due-date column alignment, got indices %v in:\n%s", dueIndices, ev.Message)
 		}
 	}
 }
@@ -240,28 +170,18 @@ func TestCmdProjectCloseExplainsStreamMode(t *testing.T) {
 	}
 }
 
-func TestCmdProjectInvalidYAMLReturnsError(t *testing.T) {
+func TestCmdProjectFallbackWhenNotLoggedIn(t *testing.T) {
 	orig := runProjectGit
 	defer func() { runProjectGit = orig }()
 
 	root := t.TempDir()
-	err := os.MkdirAll(filepath.Join(root, "docs"), 0o755)
-	if err != nil {
-		t.Fatalf("mkdir docs: %v", err)
-	}
-	err = os.WriteFile(filepath.Join(root, "docs", "project.yaml"), []byte(`top_msg: this is ms-cli project status
- color: blue
-`), 0o644)
-	if err != nil {
-		t.Fatalf("write project.yaml: %v", err)
-	}
 
 	runProjectGit = func(workDir string, args ...string) (string, error) {
 		switch strings.Join(args, " ") {
 		case "rev-parse --show-toplevel":
 			return root, nil
 		case "symbolic-ref --short HEAD":
-			return "refactor-arch-3", nil
+			return "main", nil
 		case "status --short":
 			return "", nil
 		case "rev-list --left-right --count @{upstream}...HEAD":
@@ -279,32 +199,17 @@ func TestCmdProjectInvalidYAMLReturnsError(t *testing.T) {
 
 	app.cmdProject(nil)
 
-	ev := drainUntilEventType(t, app, model.ToolError)
-	if !strings.Contains(ev.Message, "parse") || !strings.Contains(ev.Message, "docs/project.yaml") {
-		t.Fatalf("expected parse error mentioning docs/project.yaml, got %q", ev.Message)
+	ev := drainUntilEventType(t, app, model.AgentReply)
+	if !strings.Contains(ev.Message, "working tree is clean") {
+		t.Fatalf("expected fallback git status, got:\n%s", ev.Message)
 	}
 }
 
-func TestHandleCommandProjectAddWritesYAMLAndRendersSnapshot(t *testing.T) {
+func TestHandleCommandProjectAddCreatesTask(t *testing.T) {
 	orig := runProjectGit
 	defer func() { runProjectGit = orig }()
 
 	root := t.TempDir()
-	err := os.MkdirAll(filepath.Join(root, "docs"), 0o755)
-	if err != nil {
-		t.Fatalf("mkdir docs: %v", err)
-	}
-	err = os.WriteFile(filepath.Join(root, "docs", "project.yaml"), []byte(`top_msg: this is project status
-tasks:
-  items:
-    - id: existing
-      title: existing task
-      progress: 20
-      owner: alice
-`), 0o644)
-	if err != nil {
-		t.Fatalf("write project.yaml: %v", err)
-	}
 
 	runProjectGit = func(workDir string, args ...string) (string, error) {
 		switch strings.Join(args, " ") {
@@ -313,7 +218,7 @@ tasks:
 		case "symbolic-ref --short HEAD":
 			return "refactor-arch-4", nil
 		case "status --short":
-			return " M docs/project.yaml", nil
+			return "", nil
 		case "rev-list --left-right --count @{upstream}...HEAD":
 			return "0 0", nil
 		default:
@@ -322,51 +227,34 @@ tasks:
 		}
 	}
 
+	store := newMockProjectStore()
 	app := &Application{
-		WorkDir: root,
-		EventCh: make(chan model.Event, 8),
+		WorkDir:        root,
+		EventCh:        make(chan model.Event, 8),
+		projectService: project.NewService(store),
+		issueUser:      "alice",
+		issueRole:      "admin",
 	}
 
-	app.handleCommand(`/project add today "new task title" --id new-task --owner bob --progress 30 --due-date 2026-03-21`)
+	app.handleCommand(`/project add tasks "new task title" --owner bob --progress 30`)
 
 	ev := drainUntilEventType(t, app, model.AgentReply)
-	for _, want := range []string{"new task title", applyProjectStyle(" 30%", "green", false) + "  owner: bob"} {
-		if !strings.Contains(ev.Message, want) {
-			t.Fatalf("expected rendered snapshot to contain %q, got:\n%s", want, ev.Message)
-		}
+	if !strings.Contains(ev.Message, "created task #1") || !strings.Contains(ev.Message, "new task title") {
+		t.Fatalf("expected task creation confirmation, got:\n%s", ev.Message)
 	}
-
-	data, err := os.ReadFile(filepath.Join(root, "docs", "project.yaml"))
-	if err != nil {
-		t.Fatalf("read project.yaml: %v", err)
+	if len(store.tasks) != 1 {
+		t.Fatalf("expected 1 task in store, got %d", len(store.tasks))
 	}
-	for _, want := range []string{"id: new-task", "title: new task title", "progress: \"30\"", "owner: bob", "due-date: \"2026-03-21\""} {
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("expected project.yaml to contain %q, got:\n%s", want, string(data))
-		}
+	if store.tasks[0].Title != "new task title" || store.tasks[0].Owner != "bob" || store.tasks[0].Progress != 30 {
+		t.Fatalf("unexpected task: %+v", store.tasks[0])
 	}
 }
 
-func TestHandleCommandProjectUpdateWritesYAMLAndRendersSnapshot(t *testing.T) {
+func TestHandleCommandProjectUpdateModifiesTask(t *testing.T) {
 	orig := runProjectGit
 	defer func() { runProjectGit = orig }()
 
 	root := t.TempDir()
-	err := os.MkdirAll(filepath.Join(root, "docs"), 0o755)
-	if err != nil {
-		t.Fatalf("mkdir docs: %v", err)
-	}
-	err = os.WriteFile(filepath.Join(root, "docs", "project.yaml"), []byte(`top_msg: this is project status
-tasks:
-  items:
-    - id: existing
-      title: existing task
-      progress: 20
-      owner: alice
-`), 0o644)
-	if err != nil {
-		t.Fatalf("write project.yaml: %v", err)
-	}
 
 	runProjectGit = func(workDir string, args ...string) (string, error) {
 		switch strings.Join(args, " ") {
@@ -375,7 +263,7 @@ tasks:
 		case "symbolic-ref --short HEAD":
 			return "refactor-arch-4", nil
 		case "status --short":
-			return " M docs/project.yaml", nil
+			return "", nil
 		case "rev-list --left-right --count @{upstream}...HEAD":
 			return "0 0", nil
 		default:
@@ -384,55 +272,35 @@ tasks:
 		}
 	}
 
-	app := &Application{
-		WorkDir: root,
-		EventCh: make(chan model.Event, 8),
+	store := newMockProjectStore()
+	store.tasks = []project.Task{
+		{ID: 1, Section: "tasks", Title: "existing task", Status: "todo", Progress: 20, Owner: "alice"},
 	}
 
-	app.handleCommand(`/project update today existing --title "updated task" --owner carol --progress 80 --due-date 2026-03-22`)
+	app := &Application{
+		WorkDir:        root,
+		EventCh:        make(chan model.Event, 8),
+		projectService: project.NewService(store),
+		issueUser:      "alice",
+		issueRole:      "admin",
+	}
+
+	app.handleCommand(`/project update 1 --title "updated task" --owner carol --progress 80`)
 
 	ev := drainUntilEventType(t, app, model.AgentReply)
-	for _, want := range []string{"updated task", applyProjectStyle(" 80%", "green", false) + "  owner: carol"} {
-		if !strings.Contains(ev.Message, want) {
-			t.Fatalf("expected rendered snapshot to contain %q, got:\n%s", want, ev.Message)
-		}
+	if !strings.Contains(ev.Message, "updated:") {
+		t.Fatalf("expected update confirmation, got:\n%s", ev.Message)
 	}
-
-	data, err := os.ReadFile(filepath.Join(root, "docs", "project.yaml"))
-	if err != nil {
-		t.Fatalf("read project.yaml: %v", err)
-	}
-	for _, want := range []string{"title: updated task", "progress: \"80\"", "owner: carol", "due-date: \"2026-03-22\""} {
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("expected project.yaml to contain %q, got:\n%s", want, string(data))
-		}
+	if store.tasks[0].Title != "updated task" || store.tasks[0].Owner != "carol" || store.tasks[0].Progress != 80 {
+		t.Fatalf("unexpected task: %+v", store.tasks[0])
 	}
 }
 
-func TestHandleCommandProjectRemoveWritesYAMLAndRendersSnapshot(t *testing.T) {
+func TestHandleCommandProjectRemoveDeletesTask(t *testing.T) {
 	orig := runProjectGit
 	defer func() { runProjectGit = orig }()
 
 	root := t.TempDir()
-	err := os.MkdirAll(filepath.Join(root, "docs"), 0o755)
-	if err != nil {
-		t.Fatalf("mkdir docs: %v", err)
-	}
-	err = os.WriteFile(filepath.Join(root, "docs", "project.yaml"), []byte(`top_msg: this is project status
-tasks:
-  items:
-    - id: existing
-      title: existing task
-      progress: 20
-      owner: alice
-    - id: keep
-      title: keep task
-      progress: 40
-      owner: bob
-`), 0o644)
-	if err != nil {
-		t.Fatalf("write project.yaml: %v", err)
-	}
 
 	runProjectGit = func(workDir string, args ...string) (string, error) {
 		switch strings.Join(args, " ") {
@@ -441,7 +309,7 @@ tasks:
 		case "symbolic-ref --short HEAD":
 			return "refactor-arch-4", nil
 		case "status --short":
-			return " M docs/project.yaml", nil
+			return "", nil
 		case "rev-list --left-right --count @{upstream}...HEAD":
 			return "0 0", nil
 		default:
@@ -450,29 +318,30 @@ tasks:
 		}
 	}
 
-	app := &Application{
-		WorkDir: root,
-		EventCh: make(chan model.Event, 8),
+	store := newMockProjectStore()
+	store.tasks = []project.Task{
+		{ID: 1, Section: "tasks", Title: "existing task", Status: "todo", Progress: 20, Owner: "alice"},
+		{ID: 2, Section: "tasks", Title: "keep task", Status: "todo", Progress: 40, Owner: "bob"},
 	}
 
-	app.handleCommand(`/project rm today existing`)
+	app := &Application{
+		WorkDir:        root,
+		EventCh:        make(chan model.Event, 8),
+		projectService: project.NewService(store),
+		issueUser:      "alice",
+		issueRole:      "admin",
+	}
+
+	app.handleCommand(`/project rm 1`)
 
 	ev := drainUntilEventType(t, app, model.AgentReply)
-	if strings.Contains(ev.Message, "existing task") {
-		t.Fatalf("expected removed task to disappear from snapshot, got:\n%s", ev.Message)
+	if !strings.Contains(ev.Message, "removed:") {
+		t.Fatalf("expected removal confirmation, got:\n%s", ev.Message)
 	}
-	if !strings.Contains(ev.Message, "keep task") {
-		t.Fatalf("expected remaining task to stay in snapshot, got:\n%s", ev.Message)
+	if len(store.tasks) != 1 {
+		t.Fatalf("expected 1 task remaining, got %d", len(store.tasks))
 	}
-
-	data, err := os.ReadFile(filepath.Join(root, "docs", "project.yaml"))
-	if err != nil {
-		t.Fatalf("read project.yaml: %v", err)
-	}
-	if strings.Contains(string(data), "existing task") {
-		t.Fatalf("expected removed task to disappear from project.yaml, got:\n%s", string(data))
-	}
-	if !strings.Contains(string(data), "keep task") {
-		t.Fatalf("expected remaining task to stay in project.yaml, got:\n%s", string(data))
+	if store.tasks[0].Title != "keep task" {
+		t.Fatalf("expected keep task to remain, got: %+v", store.tasks[0])
 	}
 }

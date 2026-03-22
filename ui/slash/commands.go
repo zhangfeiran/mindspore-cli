@@ -111,18 +111,6 @@ func Parse(input string) (string, []string) {
 
 func (r *Registry) registerDefaults() {
 	r.Register(Command{
-		Name:        "/roadmap",
-		Description: "Check roadmap status",
-		Usage:       "/roadmap status [path]",
-	})
-
-	r.Register(Command{
-		Name:        "/weekly",
-		Description: "Check weekly update status",
-		Usage:       "/weekly status [path]",
-	})
-
-	r.Register(Command{
 		Name:        "/model",
 		Description: "Show or switch model",
 		Usage:       "/model [openai:]model",
@@ -185,7 +173,7 @@ func (r *Registry) registerDefaults() {
 	r.Register(Command{
 		Name:        "/login",
 		Description: "Log in to the bug server",
-		Usage:       "/login <server-url> <token>",
+		Usage:       "/login <token>",
 	})
 
 	r.Register(Command{

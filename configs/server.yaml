@@ -1,9 +1,9 @@
 server:
-  addr: ":8080"
+  addr: ":9473"
 
 storage:
   driver: sqlite
-  dsn: /opt/mscli/issues.db
+  dsn: ./issues.db
 
 auth:
   tokens:

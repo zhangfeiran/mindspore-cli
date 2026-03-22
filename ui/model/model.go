@@ -66,6 +66,7 @@ const (
 	ClearScreen     EventType = "ClearScreen"
 	ModelUpdate     EventType = "ModelUpdate"
 	MouseModeToggle EventType = "MouseModeToggle"
+	IssueUserUpdate EventType = "IssueUserUpdate"
 	Done            EventType = "Done"
 )
 
@@ -81,7 +82,6 @@ type Event struct {
 	CtxMax     int
 	TokensUsed int
 	Train      *TrainEventData // non-nil for train events only
-	Project    *ProjectStatusView
 }
 
 // TaskStats tracks execution statistics for the current task.
@@ -106,6 +106,7 @@ type State struct {
 	Stats            TaskStats // current task statistics
 	IsThinking       bool      // whether AI is currently thinking
 	MouseEnabled     bool      // whether mouse mode is enabled (for scrolling)
+	IssueUser        string    // logged-in bug server user
 }
 
 // NewState returns an initial empty state.
@@ -145,6 +146,7 @@ func (s State) WithTask(t TaskInfo) State {
 		Stats:            s.Stats,
 		IsThinking:       s.IsThinking,
 		MouseEnabled:     s.MouseEnabled,
+		IssueUser:        s.IssueUser,
 	}
 }
 
@@ -162,6 +164,7 @@ func (s State) WithMessage(m Message) State {
 		Stats:            s.Stats,
 		IsThinking:       s.IsThinking,
 		MouseEnabled:     s.MouseEnabled,
+		IssueUser:        s.IssueUser,
 	}
 }
 
@@ -179,6 +182,7 @@ func (s State) WithModel(m ModelInfo) State {
 		Stats:            s.Stats,
 		IsThinking:       s.IsThinking,
 		MouseEnabled:     s.MouseEnabled,
+		IssueUser:        s.IssueUser,
 	}
 }
 
@@ -196,6 +200,7 @@ func (s State) WithStats(stats TaskStats) State {
 		Stats:            stats,
 		IsThinking:       s.IsThinking,
 		MouseEnabled:     s.MouseEnabled,
+		IssueUser:        s.IssueUser,
 	}
 }
 
@@ -213,6 +218,7 @@ func (s State) WithThinking(thinking bool) State {
 		Stats:            s.Stats,
 		IsThinking:       thinking,
 		MouseEnabled:     s.MouseEnabled,
+		IssueUser:        s.IssueUser,
 	}
 }
 
@@ -230,6 +236,25 @@ func (s State) ResetStats() State {
 		Stats:            TaskStats{},
 		IsThinking:       s.IsThinking,
 		MouseEnabled:     s.MouseEnabled,
+		IssueUser:        s.IssueUser,
+	}
+}
+
+// WithIssueUser returns a new State with updated issue user.
+func (s State) WithIssueUser(user string) State {
+	return State{
+		Version:          s.Version,
+		Tasks:            s.Tasks,
+		ActiveTask:       s.ActiveTask,
+		Model:            s.Model,
+		Messages:         s.Messages,
+		ShowTaskSelector: s.ShowTaskSelector,
+		WorkDir:          s.WorkDir,
+		RepoURL:          s.RepoURL,
+		Stats:            s.Stats,
+		IsThinking:       s.IsThinking,
+		MouseEnabled:     s.MouseEnabled,
+		IssueUser:        user,
 	}
 }
 

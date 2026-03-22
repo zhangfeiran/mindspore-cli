@@ -27,5 +27,12 @@ func NewMux(store *Store, tokens []configs.TokenEntry) *http.ServeMux {
 	mux.Handle("GET /bugs/{id}/activity", auth(http.HandlerFunc(HandleListActivity(store))))
 	mux.Handle("GET /dock", auth(http.HandlerFunc(HandleDock(store))))
 
+	// Project routes
+	mux.Handle("GET /project", auth(http.HandlerFunc(HandleGetProjectSnapshot(store))))
+	mux.Handle("POST /project/tasks", auth(AdminOnly(http.HandlerFunc(HandleCreateProjectTask(store)))))
+	mux.Handle("PATCH /project/tasks/{id}", auth(AdminOnly(http.HandlerFunc(HandleUpdateProjectTask(store)))))
+	mux.Handle("DELETE /project/tasks/{id}", auth(AdminOnly(http.HandlerFunc(HandleDeleteProjectTask(store)))))
+	mux.Handle("PATCH /project/overview", auth(AdminOnly(http.HandlerFunc(HandleUpdateProjectOverview(store)))))
+
 	return mux
 }

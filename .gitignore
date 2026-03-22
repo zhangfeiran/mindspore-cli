@@ -14,3 +14,7 @@
 # ms-cli local state
 .ms-cli/
 /.cache
+
+# Server runtime artifacts
+ms-cli-server
+issues.db

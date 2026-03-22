@@ -90,35 +90,6 @@ func RenderTrainHUDHintBar(width int) string {
 	return divider + "\n" + line + indicator
 }
 
-// RenderProjectHUDHintBar renders compact project HUD hints while chat remains global.
-func RenderProjectHUDHintBar(width int) string {
-	divider := hintDividerStyle.Render(repeatChar("━", width))
-	projectHints := []hint{
-		{"/", "commands"},
-		{"enter", "send chat"},
-		{"wheel", "scroll"},
-		{"pgup/pgdn", "scroll"},
-		{"ctrl+c", "quit"},
-	}
-
-	parts := make([]string, len(projectHints))
-	for i, h := range projectHints {
-		parts[i] = hintKeyStyle.Render(h.key) + " " + hintDescStyle.Render(h.desc)
-	}
-
-	sep := hintSepStyle.Render(" • ")
-	line := hintTextStyle.Render("")
-	for i, p := range parts {
-		if i > 0 {
-			line += sep
-		}
-		line += p
-	}
-
-	indicator := hintDescStyle.Render("  [project hud]")
-	return divider + "\n" + line + indicator
-}
-
 // RenderTrainHintBar renders the hint bar for the train workspace with focus context.
 func RenderTrainHintBar(width int, focused model.TrainPanelID, opts ...bool) string {
 	maximized := len(opts) > 0 && opts[0]

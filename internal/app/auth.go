@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vigo999/ms-cli/configs"
 	"github.com/vigo999/ms-cli/internal/issues"
+	projectpkg "github.com/vigo999/ms-cli/internal/project"
 	"github.com/vigo999/ms-cli/ui/model"
 )
 
@@ -51,15 +53,18 @@ func saveCredentials(cred *credentials) error {
 }
 
 func (a *Application) cmdLogin(args []string) {
-	if len(args) < 2 {
+	if len(args) == 0 {
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
-			Message: "Usage: /login <server-url> <token>",
+			Message: "Usage: /login <token>",
 		}
 		return
 	}
-	serverURL := strings.TrimRight(args[0], "/")
-	token := args[1]
+	serverURL := strings.TrimRight(a.Config.Issues.ServerURL, "/")
+	if serverURL == "" {
+		serverURL = strings.TrimRight(configs.DefaultIssuesServerURL, "/")
+	}
+	token := args[0]
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, err := http.NewRequest("GET", serverURL+"/me", nil)
@@ -102,8 +107,11 @@ func (a *Application) cmdLogin(args []string) {
 	}
 
 	a.issueService = issues.NewService(issues.NewRemoteStore(serverURL, token))
+	a.projectService = projectpkg.NewService(projectpkg.NewRemoteStore(serverURL, token))
 	a.issueUser = me.User
+	a.issueRole = me.Role
 
+	a.EventCh <- model.Event{Type: model.IssueUserUpdate, Message: me.User}
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
 		Message: fmt.Sprintf("logged in as %s (%s)", me.User, me.Role),
@@ -118,11 +126,44 @@ func (a *Application) ensureIssueService() bool {
 	if err != nil {
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
-			Message: "not logged in. Run /login <server-url> <token> first.",
+			Message: "not logged in. Run /login <token> first.",
 		}
 		return false
 	}
 	a.issueService = issues.NewService(issues.NewRemoteStore(cred.ServerURL, cred.Token))
 	a.issueUser = cred.User
+	a.issueRole = cred.Role
+	a.EventCh <- model.Event{Type: model.IssueUserUpdate, Message: cred.User}
+	return true
+}
+
+func (a *Application) ensureProjectService() bool {
+	if a.projectService != nil {
+		return true
+	}
+	cred, err := loadCredentials()
+	if err != nil {
+		return false
+	}
+	a.projectService = projectpkg.NewService(projectpkg.NewRemoteStore(cred.ServerURL, cred.Token))
+	if a.issueUser == "" {
+		a.issueUser = cred.User
+	}
+	return true
+}
+
+func (a *Application) ensureAdmin() bool {
+	if a.issueRole == "" {
+		if !a.ensureIssueService() {
+			return false
+		}
+	}
+	if a.issueRole != "admin" {
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: "permission denied: admin role required",
+		}
+		return false
+	}
 	return true
 }

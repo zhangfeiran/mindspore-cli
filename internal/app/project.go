@@ -1,18 +1,16 @@
 package app
 
 import (
-	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	projectpkg "github.com/vigo999/ms-cli/internal/project"
 	"github.com/vigo999/ms-cli/ui/model"
-	"gopkg.in/yaml.v3"
 )
 
 var runProjectGit = func(workDir string, args ...string) (string, error) {
@@ -29,36 +27,20 @@ var runProjectGit = func(workDir string, args ...string) (string, error) {
 }
 
 type projectCard struct {
-	Status      model.ProjectStatusView
-	Doc         *yaml.Node
-	Overview    []string
-	Progress    string
-	ProgressPct int
-	TodayTasks  []projectTask
-	Today       []string
-	Tomorrow    []string
-	WeekGoals   []string
+	Status     model.ProjectStatusView
+	Overview   []string
+	Milestones []projectTask
+	Tasks      []projectTask
+	Support    []string
 }
 
 type projectTask struct {
-	ID       string `yaml:"id"`
-	Title    string `yaml:"title"`
-	Status   string `yaml:"status"`
-	Progress int    `yaml:"progress"`
-	Owner    string `yaml:"owner"`
-}
-
-type projectDoc struct {
-	Overview struct {
-		Phase string `yaml:"phase"`
-		Owner string `yaml:"owner"`
-		Focus string `yaml:"focus"`
-	} `yaml:"overview"`
-	ProgressPct int           `yaml:"progress_pct"`
-	TodayTasks  []projectTask `yaml:"today_tasks"`
-	Today       []string      `yaml:"today"`
-	Tomorrow    []string      `yaml:"tomorrow"`
-	WeekGoals   []string      `yaml:"week_goals"`
+	ID       string
+	Title    string
+	Status   string
+	Progress int
+	Owner    string
+	Due      string
 }
 
 func (a *Application) cmdProjectInput(raw string) {
@@ -88,15 +70,31 @@ func (a *Application) cmdProject(args []string) {
 			Message: "project status is stream-only now. Run /project again to refresh the snapshot.",
 		}
 	case "add":
+		if !a.ensureAdmin() {
+			return
+		}
 		if err := a.cmdProjectAdd(args[1:]); err != nil {
 			a.emitProjectCommandError(err)
 		}
 	case "update":
+		if !a.ensureAdmin() {
+			return
+		}
 		if err := a.cmdProjectUpdate(args[1:]); err != nil {
 			a.emitProjectCommandError(err)
 		}
 	case "rm", "remove", "delete":
+		if !a.ensureAdmin() {
+			return
+		}
 		if err := a.cmdProjectRemove(args[1:]); err != nil {
+			a.emitProjectCommandError(err)
+		}
+	case "overview":
+		if !a.ensureAdmin() {
+			return
+		}
+		if err := a.cmdProjectOverview(args[1:]); err != nil {
 			a.emitProjectCommandError(err)
 		}
 	default:
@@ -108,7 +106,7 @@ func (a *Application) cmdProject(args []string) {
 }
 
 func (a *Application) emitProjectSnapshot() {
-	card, err := collectProjectCard(a.WorkDir)
+	status, err := collectProjectStatus(a.WorkDir)
 	if err != nil {
 		a.EventCh <- model.Event{
 			Type:     model.ToolError,
@@ -117,10 +115,72 @@ func (a *Application) emitProjectSnapshot() {
 		}
 		return
 	}
+
+	var card projectCard
+	card.Status = status
+
+	if a.ensureProjectService() {
+		snap, err := a.projectService.Snapshot()
+		if err == nil {
+			card = buildCardFromSnapshot(snap, status)
+		}
+	}
+
+	// Fallback overview when not logged in or server returns empty
+	if len(card.Overview) == 0 {
+		card.Overview = fallbackOverview(status)
+	}
+
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
 		Message: renderProjectCard(card),
 	}
+}
+
+func buildCardFromSnapshot(snap *projectpkg.Snapshot, status model.ProjectStatusView) projectCard {
+	card := projectCard{Status: status}
+
+	ov := snap.Overview
+	if ov.Phase != "" {
+		card.Overview = append(card.Overview, "  phase: "+ov.Phase)
+	}
+	if ov.Owner != "" {
+		card.Overview = append(card.Overview, "  owner: "+ov.Owner)
+	}
+	if ov.Repo != "" {
+		card.Overview = append(card.Overview, "  repo: "+ov.Repo)
+	}
+	if ov.Branch != "" {
+		card.Overview = append(card.Overview, "  branch: "+ov.Branch)
+	}
+
+	for _, t := range snap.Tasks {
+		pt := projectTask{
+			ID:       strconv.Itoa(t.ID),
+			Title:    t.Title,
+			Status:   t.Status,
+			Progress: t.Progress,
+			Owner:    t.Owner,
+			Due:      t.Due,
+		}
+		switch t.Section {
+		case "milestones":
+			card.Milestones = append(card.Milestones, pt)
+		case "support":
+			card.Support = append(card.Support, t.Title)
+		default:
+			card.Tasks = append(card.Tasks, pt)
+		}
+	}
+	return card
+}
+
+func taskToChecklist(t projectTask) string {
+	marker := "[ ] "
+	if normalizeTaskStatus(t.Status) == "done" || t.Progress >= 100 {
+		marker = "[x] "
+	}
+	return marker + t.Title
 }
 
 func (a *Application) emitProjectCommandError(err error) {
@@ -132,118 +192,233 @@ func (a *Application) emitProjectCommandError(err error) {
 
 func (a *Application) cmdProjectAdd(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: /project add <section> \"<title>\" [--id id] [--owner owner] [--progress pct]")
+		return fmt.Errorf("usage: /project add <section> \"<title>\" [--owner owner] [--progress pct]")
 	}
-	root, doc, err := loadOrCreateProjectDoc(a.WorkDir)
-	if err != nil {
-		return err
+	if !a.ensureProjectService() {
+		return fmt.Errorf("not logged in. Run /login <token> first")
 	}
-	section, err := resolveProjectSectionKey(projectDocRoot(doc), args[0], true)
-	if err != nil {
-		return err
-	}
-	opts, err := parseProjectTaskOptions(args[2:], true)
-	if err != nil {
-		return err
-	}
+	section := canonicalSection(args[0])
 	title := strings.TrimSpace(args[1])
 	if title == "" {
 		return fmt.Errorf("title cannot be empty")
-	}
-	items, err := ensureProjectSectionItems(projectDocRoot(doc), section)
-	if err != nil {
-		return err
-	}
-	item := newProjectTaskNode(projectTaskEdit{
-		ID:       opts.ID,
-		Title:    title,
-		Owner:    opts.Owner,
-		DueDate:  opts.DueDate,
-		Progress: opts.Progress,
-	})
-	items.Content = append(items.Content, item)
-	if err := writeProjectDocNode(root, doc); err != nil {
-		return err
-	}
-	a.emitProjectSnapshot()
-	return nil
-}
-
-func (a *Application) cmdProjectUpdate(args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("usage: /project update <section> <target> [--title title] [--owner owner] [--progress pct]")
-	}
-	root, doc, err := loadOrCreateProjectDoc(a.WorkDir)
-	if err != nil {
-		return err
-	}
-	section, err := resolveProjectSectionKey(projectDocRoot(doc), args[0], false)
-	if err != nil {
-		return err
 	}
 	opts, err := parseProjectTaskOptions(args[2:], false)
 	if err != nil {
 		return err
 	}
-	if !opts.HasUpdates() {
-		return fmt.Errorf("update requires at least one of --title, --owner, or --progress")
+	owner := opts.Owner
+	if owner == "" {
+		owner = a.issueUser
 	}
-	items, err := getProjectSectionItems(projectDocRoot(doc), section)
+	task, err := a.projectService.AddTask(section, title, owner, a.issueUser, opts.Due, opts.Progress)
 	if err != nil {
 		return err
 	}
-	target := strings.TrimSpace(args[1])
-	index := findProjectTaskIndex(items, target)
-	if index < 0 {
-		return fmt.Errorf("task %q not found in %s", target, section)
+	var msg string
+	switch section {
+	case "tasks":
+		msg = fmt.Sprintf("created task #%d: %s", task.ID, task.Title)
+	case "milestones":
+		msg = fmt.Sprintf("added milestone: %s", task.Title)
+	case "support":
+		msg = fmt.Sprintf("added support: %s", task.Title)
+	default:
+		msg = fmt.Sprintf("created %s: %s", section, task.Title)
 	}
-	applyProjectTaskEdit(items.Content[index], opts)
-	if err := writeProjectDocNode(root, doc); err != nil {
+	a.EventCh <- model.Event{
+		Type:    model.AgentReply,
+		Message: msg,
+	}
+	return nil
+}
+
+func (a *Application) cmdProjectUpdate(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: /project update <id|title> [--title title] [--owner owner] [--progress pct] [--status status] [--due date]")
+	}
+	if !a.ensureProjectService() {
+		return fmt.Errorf("not logged in. Run /login <token> first")
+	}
+	id, target, err := a.resolveTaskTarget(args[0])
+	if err != nil {
 		return err
 	}
-	a.emitProjectSnapshot()
+	_ = target
+	opts, err := parseProjectTaskOptions(args[1:], false)
+	if err != nil {
+		return err
+	}
+	if !opts.HasUpdates() {
+		return fmt.Errorf("update requires at least one of --title, --owner, --status, --due, or --progress")
+	}
+	var titlePtr, ownerPtr, statusPtr, duePtr *string
+	if strings.TrimSpace(opts.Title) != "" {
+		titlePtr = &opts.Title
+	}
+	if strings.TrimSpace(opts.Owner) != "" {
+		ownerPtr = &opts.Owner
+	}
+	if strings.TrimSpace(opts.Status) != "" {
+		statusPtr = &opts.Status
+	}
+	if strings.TrimSpace(opts.Due) != "" {
+		duePtr = &opts.Due
+	}
+	task, err := a.projectService.UpdateTask(id, titlePtr, ownerPtr, statusPtr, duePtr, opts.Progress)
+	if err != nil {
+		return err
+	}
+	a.EventCh <- model.Event{
+		Type:    model.AgentReply,
+		Message: fmt.Sprintf("updated: %s", task.Title),
+	}
 	return nil
 }
 
 func (a *Application) cmdProjectRemove(args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("usage: /project rm <section> <target>")
+	if len(args) < 1 {
+		return fmt.Errorf("usage: /project rm <id|title>")
 	}
-	root, doc, err := loadOrCreateProjectDoc(a.WorkDir)
+	if !a.ensureProjectService() {
+		return fmt.Errorf("not logged in. Run /login <token> first")
+	}
+	id, target, err := a.resolveTaskTarget(args[0])
 	if err != nil {
 		return err
 	}
-	section, err := resolveProjectSectionKey(projectDocRoot(doc), args[0], false)
-	if err != nil {
+	if err := a.projectService.RemoveTask(id); err != nil {
 		return err
 	}
-	items, err := getProjectSectionItems(projectDocRoot(doc), section)
-	if err != nil {
-		return err
+	a.EventCh <- model.Event{
+		Type:    model.AgentReply,
+		Message: fmt.Sprintf("removed: %s", target),
 	}
-	target := strings.TrimSpace(args[1])
-	index := findProjectTaskIndex(items, target)
-	if index < 0 {
-		return fmt.Errorf("task %q not found in %s", target, section)
-	}
-	items.Content = append(items.Content[:index], items.Content[index+1:]...)
-	if err := writeProjectDocNode(root, doc); err != nil {
-		return err
-	}
-	a.emitProjectSnapshot()
 	return nil
 }
 
+func (a *Application) resolveTaskTarget(arg string) (int, string, error) {
+	// Try as numeric ID first (for tasks).
+	if id, err := strconv.Atoi(arg); err == nil {
+		return id, fmt.Sprintf("#%d", id), nil
+	}
+	// Otherwise match by title (for milestones/support).
+	snap, err := a.projectService.Snapshot()
+	if err != nil {
+		return 0, "", fmt.Errorf("cannot resolve target: %v", err)
+	}
+	lower := strings.ToLower(strings.TrimSpace(arg))
+	for _, t := range snap.Tasks {
+		if strings.ToLower(t.Title) == lower {
+			return t.ID, t.Title, nil
+		}
+	}
+	return 0, "", fmt.Errorf("no item found matching %q", arg)
+}
+
+func (a *Application) cmdProjectOverview(args []string) error {
+	if !a.ensureProjectService() {
+		return fmt.Errorf("not logged in. Run /login <token> first")
+	}
+	opts, err := parseOverviewOptions(args)
+	if err != nil {
+		return err
+	}
+	if opts.Phase == "" && opts.Owner == "" && opts.Repo == "" && opts.Branch == "" {
+		return fmt.Errorf("usage: /project overview --phase X --owner Y --repo URL --branch B")
+	}
+	ov, err := a.projectService.UpdateOverview(opts.Phase, opts.Owner, opts.Repo, opts.Branch)
+	if err != nil {
+		return err
+	}
+	lines := []string{"overview updated:"}
+	if ov.Phase != "" {
+		lines = append(lines, "  phase: "+ov.Phase)
+	}
+	if ov.Owner != "" {
+		lines = append(lines, "  owner: "+ov.Owner)
+	}
+	if ov.Repo != "" {
+		lines = append(lines, "  repo: "+ov.Repo)
+	}
+	if ov.Branch != "" {
+		lines = append(lines, "  branch: "+ov.Branch)
+	}
+	a.EventCh <- model.Event{
+		Type:    model.AgentReply,
+		Message: strings.Join(lines, "\n"),
+	}
+	return nil
+}
+
+type overviewEdit struct {
+	Phase  string
+	Owner  string
+	Repo   string
+	Branch string
+}
+
+func parseOverviewOptions(args []string) (overviewEdit, error) {
+	var edit overviewEdit
+	for i := 0; i < len(args); i++ {
+		switch strings.ToLower(strings.TrimSpace(args[i])) {
+		case "--phase":
+			if i+1 >= len(args) {
+				return edit, fmt.Errorf("--phase requires a value")
+			}
+			i++
+			edit.Phase = strings.TrimSpace(args[i])
+		case "--owner":
+			if i+1 >= len(args) {
+				return edit, fmt.Errorf("--owner requires a value")
+			}
+			i++
+			edit.Owner = strings.TrimSpace(args[i])
+		case "--repo":
+			if i+1 >= len(args) {
+				return edit, fmt.Errorf("--repo requires a value")
+			}
+			i++
+			edit.Repo = strings.TrimSpace(args[i])
+		case "--branch":
+			if i+1 >= len(args) {
+				return edit, fmt.Errorf("--branch requires a value")
+			}
+			i++
+			edit.Branch = strings.TrimSpace(args[i])
+		default:
+			return edit, fmt.Errorf("unknown flag %q", args[i])
+		}
+	}
+	return edit, nil
+}
+
 type projectTaskEdit struct {
-	ID       string
 	Title    string
 	Owner    string
-	DueDate  string
+	Status   string
+	Due      string
 	Progress *int
 }
 
 func (e projectTaskEdit) HasUpdates() bool {
-	return strings.TrimSpace(e.Title) != "" || strings.TrimSpace(e.Owner) != "" || strings.TrimSpace(e.DueDate) != "" || e.Progress != nil
+	return strings.TrimSpace(e.Title) != "" || strings.TrimSpace(e.Owner) != "" || strings.TrimSpace(e.Status) != "" || strings.TrimSpace(e.Due) != "" || e.Progress != nil
+}
+
+func canonicalSection(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "task", "tasks":
+		return "tasks"
+	case "milestone", "milestones":
+		return "milestones"
+	case "support":
+		return "support"
+	default:
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return "tasks"
+		}
+		return raw
+	}
 }
 
 func splitProjectArgs(raw string) ([]string, error) {
@@ -295,72 +470,11 @@ func splitProjectArgs(raw string) ([]string, error) {
 	return args, nil
 }
 
-func loadOrCreateProjectDoc(workDir string) (string, *yaml.Node, error) {
-	status, err := collectProjectStatus(workDir)
-	if err != nil {
-		return "", nil, err
-	}
-	root := status.Root
-	if strings.TrimSpace(root) == "" {
-		root, err = filepath.Abs(workDir)
-		if err != nil {
-			root = workDir
-		}
-	}
-	doc, err := loadProjectDocNode(root)
-	if err != nil {
-		return "", nil, err
-	}
-	if doc != nil {
-		return root, doc, nil
-	}
-	return root, newProjectDocNode(), nil
-}
 
-func newProjectDocNode() *yaml.Node {
-	root := &yaml.Node{Kind: yaml.MappingNode}
-	return &yaml.Node{
-		Kind:    yaml.DocumentNode,
-		Content: []*yaml.Node{root},
-	}
-}
-
-func writeProjectDocNode(root string, doc *yaml.Node) error {
-	if strings.TrimSpace(root) == "" {
-		return fmt.Errorf("project root is empty")
-	}
-	path := filepath.Join(root, "docs", "project.yaml")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-	}
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(doc); err != nil {
-		return fmt.Errorf("encode %s: %w", path, err)
-	}
-	if err := enc.Close(); err != nil {
-		return fmt.Errorf("encode %s: %w", path, err)
-	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
-}
-
-func parseProjectTaskOptions(args []string, allowID bool) (projectTaskEdit, error) {
+func parseProjectTaskOptions(args []string, _ bool) (projectTaskEdit, error) {
 	var edit projectTaskEdit
 	for i := 0; i < len(args); i++ {
 		switch strings.ToLower(strings.TrimSpace(args[i])) {
-		case "--id":
-			if !allowID {
-				return edit, fmt.Errorf("--id is only supported on /project add")
-			}
-			if i+1 >= len(args) {
-				return edit, fmt.Errorf("--id requires a value")
-			}
-			i++
-			edit.ID = strings.TrimSpace(args[i])
 		case "--title":
 			if i+1 >= len(args) {
 				return edit, fmt.Errorf("--title requires a value")
@@ -373,12 +487,18 @@ func parseProjectTaskOptions(args []string, allowID bool) (projectTaskEdit, erro
 			}
 			i++
 			edit.Owner = strings.TrimSpace(args[i])
-		case "--due-date", "--due_date":
+		case "--status":
 			if i+1 >= len(args) {
-				return edit, fmt.Errorf("--due-date requires a value")
+				return edit, fmt.Errorf("--status requires a value")
 			}
 			i++
-			edit.DueDate = strings.TrimSpace(args[i])
+			edit.Status = strings.TrimSpace(args[i])
+		case "--due":
+			if i+1 >= len(args) {
+				return edit, fmt.Errorf("--due requires a value")
+			}
+			i++
+			edit.Due = strings.TrimSpace(args[i])
 		case "--progress":
 			if i+1 >= len(args) {
 				return edit, fmt.Errorf("--progress requires a value")
@@ -396,246 +516,7 @@ func parseProjectTaskOptions(args []string, allowID bool) (projectTaskEdit, erro
 	return edit, nil
 }
 
-func resolveProjectSectionKey(root *yaml.Node, raw string, create bool) (string, error) {
-	aliases := projectSectionAliases(raw)
-	for _, key := range aliases {
-		if _, ok := projectMappingValue(root, key); ok {
-			return key, nil
-		}
-	}
-	if create {
-		return aliases[0], nil
-	}
-	return "", fmt.Errorf("unknown project section %q", raw)
-}
 
-func projectSectionAliases(raw string) []string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "today", "today_task", "today_tasks", "task", "tasks":
-		return []string{"tasks", "today_tasks", "today"}
-	case "tomorrow", "tomorrow_task", "tomorrow_tasks":
-		return []string{"tomorrow", "tomorrow_tasks"}
-	case "milestone", "milestones":
-		return []string{"milestones", "milestone"}
-	default:
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			return []string{"tasks"}
-		}
-		return []string{raw}
-	}
-}
-
-func projectMappingValue(root *yaml.Node, key string) (*yaml.Node, bool) {
-	if root == nil || root.Kind != yaml.MappingNode {
-		return nil, false
-	}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if strings.EqualFold(strings.TrimSpace(root.Content[i].Value), key) {
-			return root.Content[i+1], true
-		}
-	}
-	return nil, false
-}
-
-func ensureProjectSectionItems(root *yaml.Node, key string) (*yaml.Node, error) {
-	if root == nil || root.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("project.yaml root must be a mapping")
-	}
-	if value, ok := projectMappingValue(root, key); ok {
-		return ensureSectionItemsNode(value)
-	}
-	items := &yaml.Node{Kind: yaml.SequenceNode}
-	value := &yaml.Node{
-		Kind: yaml.MappingNode,
-		Content: []*yaml.Node{
-			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "items"},
-			items,
-		},
-	}
-	root.Content = append(root.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
-		value,
-	)
-	return items, nil
-}
-
-func getProjectSectionItems(root *yaml.Node, key string) (*yaml.Node, error) {
-	value, ok := projectMappingValue(root, key)
-	if !ok {
-		return nil, fmt.Errorf("project section %q not found", key)
-	}
-	return ensureSectionItemsNode(value)
-}
-
-func ensureSectionItemsNode(section *yaml.Node) (*yaml.Node, error) {
-	if section == nil {
-		return nil, fmt.Errorf("project section is empty")
-	}
-	if section.Kind == yaml.SequenceNode {
-		return section, nil
-	}
-	if section.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("project section must be a list or mapping with items")
-	}
-	for i := 0; i+1 < len(section.Content); i += 2 {
-		if strings.EqualFold(strings.TrimSpace(section.Content[i].Value), "items") {
-			if section.Content[i+1].Kind != yaml.SequenceNode {
-				return nil, fmt.Errorf("project section items must be a list")
-			}
-			return section.Content[i+1], nil
-		}
-	}
-	items := &yaml.Node{Kind: yaml.SequenceNode}
-	section.Content = append(section.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "items"},
-		items,
-	)
-	return items, nil
-}
-
-func newProjectTaskNode(edit projectTaskEdit) *yaml.Node {
-	item := &yaml.Node{Kind: yaml.MappingNode}
-	if strings.TrimSpace(edit.ID) != "" {
-		appendProjectScalar(item, "id", edit.ID)
-	}
-	appendProjectScalar(item, "title", edit.Title)
-	if edit.Progress != nil {
-		appendProjectScalar(item, "progress", fmt.Sprintf("%d", *edit.Progress))
-	}
-	if strings.TrimSpace(edit.Owner) != "" {
-		appendProjectScalar(item, "owner", edit.Owner)
-	}
-	if strings.TrimSpace(edit.DueDate) != "" {
-		appendProjectScalar(item, "due-date", edit.DueDate)
-	}
-	return item
-}
-
-func appendProjectScalar(node *yaml.Node, key, value string) {
-	node.Content = append(node.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value},
-	)
-}
-
-func findProjectTaskIndex(items *yaml.Node, target string) int {
-	target = strings.TrimSpace(target)
-	for i, item := range items.Content {
-		if item == nil || item.Kind != yaml.MappingNode {
-			continue
-		}
-		fields := orderedNodeFields(item)
-		if strings.EqualFold(fieldValue(fields, "id"), target) || strings.EqualFold(fieldValue(fields, "title"), target) {
-			return i
-		}
-	}
-	return -1
-}
-
-func applyProjectTaskEdit(node *yaml.Node, edit projectTaskEdit) {
-	if strings.TrimSpace(edit.Title) != "" {
-		setProjectScalarField(node, "title", edit.Title)
-	}
-	if strings.TrimSpace(edit.Owner) != "" {
-		setProjectScalarField(node, "owner", edit.Owner)
-	}
-	if strings.TrimSpace(edit.DueDate) != "" {
-		setProjectScalarField(node, "due-date", edit.DueDate)
-	}
-	if edit.Progress != nil {
-		setProjectScalarField(node, "progress", fmt.Sprintf("%d", *edit.Progress))
-	}
-}
-
-func setProjectScalarField(node *yaml.Node, key, value string) {
-	if node == nil || node.Kind != yaml.MappingNode {
-		return
-	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if strings.EqualFold(strings.TrimSpace(node.Content[i].Value), key) {
-			node.Content[i+1].Kind = yaml.ScalarNode
-			node.Content[i+1].Tag = "!!str"
-			node.Content[i+1].Value = value
-			return
-		}
-	}
-	appendProjectScalar(node, key, value)
-}
-
-func collectProjectCard(workDir string) (projectCard, error) {
-	status, err := collectProjectStatus(workDir)
-	if err != nil {
-		return projectCard{}, err
-	}
-
-	card := projectCard{
-		Status: status,
-	}
-	docNode, err := loadProjectDocNode(status.Root)
-	if err != nil {
-		return projectCard{}, err
-	}
-	if docNode != nil {
-		card.Doc = docNode
-		return card, nil
-	}
-	if doc := loadProjectDoc(status.Root); doc != nil {
-		card.Overview = docOverviewLines(doc)
-		if doc.ProgressPct > 0 {
-			card.ProgressPct = doc.ProgressPct
-			card.Progress = progressBar(doc.ProgressPct, 10)
-		}
-		if len(doc.TodayTasks) > 0 {
-			card.TodayTasks = normalizeProjectTasks(doc.TodayTasks)
-		}
-		if len(doc.Today) > 0 {
-			card.Today = normalizeProjectItems(doc.Today)
-		}
-		if len(doc.Tomorrow) > 0 {
-			card.Tomorrow = normalizeProjectItems(doc.Tomorrow)
-		}
-		if len(doc.WeekGoals) > 0 {
-			card.WeekGoals = normalizeProjectItems(doc.WeekGoals)
-		}
-	}
-	if roadmap := loadProjectRoadmap(status.Root); roadmap != nil {
-		if card.Progress == "" {
-			card.ProgressPct = roadmap.Overall.Pct
-			card.Progress = progressBar(roadmap.Overall.Pct, 10)
-		}
-		if len(card.Today) == 0 {
-			card.Today = roadmapToday(roadmap.rm)
-		}
-		if len(card.Tomorrow) == 0 {
-			card.Tomorrow = roadmapTomorrow(roadmap.rm)
-		}
-		if len(card.WeekGoals) == 0 {
-			card.WeekGoals = roadmapWeekGoals(roadmap.rm)
-		}
-	}
-	if card.Progress == "" {
-		card.Progress = progressBar(0, 10)
-	}
-	if len(card.TodayTasks) == 0 && len(card.Today) == 0 {
-		card.Today = fallbackToday(status)
-	}
-	if len(card.Today) == 0 {
-		if len(card.TodayTasks) == 0 {
-			card.Today = fallbackToday(status)
-		}
-	}
-	if len(card.Tomorrow) == 0 {
-		card.Tomorrow = fallbackTomorrow(status)
-	}
-	if len(card.Overview) == 0 {
-		card.Overview = fallbackOverview(status)
-	}
-	if len(card.WeekGoals) == 0 {
-		card.WeekGoals = fallbackWeekGoals(status)
-	}
-	return card, nil
-}
 
 func collectProjectStatus(workDir string) (model.ProjectStatusView, error) {
 	root, err := runProjectGit(workDir, "rev-parse", "--show-toplevel")
@@ -796,119 +677,6 @@ func formatProjectSummary(modified, staged, untracked, ahead, behind int) (strin
 	return strings.Join(parts, " · "), dirty
 }
 
-type roadmapSnapshot struct {
-	rm      *projectpkg.Roadmap
-	Overall projectpkg.Progress
-}
-
-func loadProjectRoadmap(root string) *roadmapSnapshot {
-	if strings.TrimSpace(root) == "" {
-		return nil
-	}
-	path := filepath.Join(root, "roadmap.yaml")
-	if _, err := os.Stat(path); err != nil {
-		return nil
-	}
-	rm, err := projectpkg.LoadRoadmapFromFile(path)
-	if err != nil {
-		return nil
-	}
-	status, err := projectpkg.ComputeRoadmapStatus(rm, time.Now())
-	if err != nil {
-		return nil
-	}
-	return &roadmapSnapshot{rm: rm, Overall: status.Overall}
-}
-
-func loadProjectDoc(root string) *projectDoc {
-	if strings.TrimSpace(root) == "" {
-		return nil
-	}
-	path := filepath.Join(root, "docs", "project.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var doc projectDoc
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil
-	}
-	return &doc
-}
-
-func loadProjectDocNode(root string) (*yaml.Node, error) {
-	if strings.TrimSpace(root) == "" {
-		return nil, nil
-	}
-	path := filepath.Join(root, "docs", "project.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read %s: %w", path, err)
-	}
-	var node yaml.Node
-	if err := yaml.Unmarshal(data, &node); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	return &node, nil
-}
-
-func docOverviewLines(doc *projectDoc) []string {
-	if doc == nil {
-		return nil
-	}
-	lines := []string{}
-	if strings.TrimSpace(doc.Overview.Phase) != "" {
-		lines = append(lines, "phase: "+doc.Overview.Phase)
-	}
-	if strings.TrimSpace(doc.Overview.Owner) != "" {
-		lines = append(lines, "owner: "+doc.Overview.Owner)
-	}
-	if strings.TrimSpace(doc.Overview.Focus) != "" {
-		lines = append(lines, "focus: "+doc.Overview.Focus)
-	}
-	return lines
-}
-
-func normalizeProjectItems(items []string) []string {
-	out := make([]string, 0, len(items))
-	for _, item := range items {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		lower := strings.ToLower(item)
-		if strings.HasPrefix(lower, "[x]") || strings.HasPrefix(lower, "[ ]") {
-			out = append(out, item)
-			continue
-		}
-		out = append(out, "[ ] "+item)
-	}
-	return out
-}
-
-func normalizeProjectTasks(tasks []projectTask) []projectTask {
-	out := make([]projectTask, 0, len(tasks))
-	for _, task := range tasks {
-		task.Title = strings.TrimSpace(task.Title)
-		if task.Title == "" {
-			continue
-		}
-		task.Status = normalizeTaskStatus(task.Status)
-		if task.Progress < 0 {
-			task.Progress = 0
-		}
-		if task.Progress > 100 {
-			task.Progress = 100
-		}
-		task.Owner = strings.TrimSpace(task.Owner)
-		out = append(out, task)
-	}
-	return out
-}
-
 func normalizeTaskStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "done":
@@ -924,167 +692,12 @@ func normalizeTaskStatus(status string) string {
 	}
 }
 
-func roadmapToday(rm *projectpkg.Roadmap) []string {
-	if rm == nil {
-		return nil
-	}
-	phase := currentRoadmapPhase(rm)
-	if phase == nil {
-		return nil
-	}
-	items := make([]string, 0, 3)
-	for _, ms := range phase.Milestones {
-		switch strings.ToLower(strings.TrimSpace(ms.Status)) {
-		case "done":
-			items = append(items, "[x] "+ms.Title)
-		case "in_progress":
-			items = append(items, "[ ] "+ms.Title)
-		}
-		if len(items) == 3 {
-			return items
-		}
-	}
-	return items
-}
-
-func roadmapTomorrow(rm *projectpkg.Roadmap) []string {
-	if rm == nil {
-		return nil
-	}
-	phase := currentRoadmapPhase(rm)
-	if phase == nil {
-		return nil
-	}
-	items := make([]string, 0, 3)
-	for _, ms := range phase.Milestones {
-		if strings.ToLower(strings.TrimSpace(ms.Status)) == "pending" {
-			items = append(items, "[ ] "+ms.Title)
-		}
-		if len(items) == 3 {
-			return items
-		}
-	}
-	if len(items) > 0 {
-		return items
-	}
-	for _, next := range rm.Phases {
-		if next.ID == phase.ID {
-			continue
-		}
-		for _, ms := range next.Milestones {
-			if strings.ToLower(strings.TrimSpace(ms.Status)) == "pending" {
-				items = append(items, "[ ] "+ms.Title)
-			}
-			if len(items) == 3 {
-				return items
-			}
-		}
-		if len(items) > 0 {
-			return items
-		}
-	}
-	return items
-}
-
-func roadmapWeekGoals(rm *projectpkg.Roadmap) []string {
-	if rm == nil {
-		return nil
-	}
-	phase := currentRoadmapPhase(rm)
-	if phase == nil {
-		return nil
-	}
-	items := make([]string, 0, 4)
-	for _, ms := range phase.Milestones {
-		status := strings.ToLower(strings.TrimSpace(ms.Status))
-		if status == "done" {
-			continue
-		}
-		items = append(items, "[ ] "+ms.Title)
-		if len(items) == 4 {
-			return items
-		}
-	}
-	return items
-}
-
-func currentRoadmapPhase(rm *projectpkg.Roadmap) *projectpkg.Phase {
-	if rm == nil {
-		return nil
-	}
-	for i := range rm.Phases {
-		phase := &rm.Phases[i]
-		hasInFlight := false
-		hasPending := false
-		for _, ms := range phase.Milestones {
-			switch strings.ToLower(strings.TrimSpace(ms.Status)) {
-			case "in_progress":
-				hasInFlight = true
-			case "pending":
-				hasPending = true
-			}
-		}
-		if hasInFlight || hasPending {
-			return phase
-		}
-	}
-	if len(rm.Phases) > 0 {
-		return &rm.Phases[0]
-	}
-	return nil
-}
-
-func fallbackToday(status model.ProjectStatusView) []string {
-	items := []string{}
-	if status.Staged > 0 {
-		items = append(items, fmt.Sprintf("[x] %d file(s) staged", status.Staged))
-	}
-	if status.Modified > 0 {
-		items = append(items, fmt.Sprintf("[ ] %d modified file(s) still open", status.Modified))
-	}
-	if status.Untracked > 0 {
-		items = append(items, fmt.Sprintf("[ ] %d new file(s) not tracked yet", status.Untracked))
-	}
-	if len(items) == 0 {
-		items = append(items, "[x] working tree is clean")
-	}
-	return items
-}
-
-func fallbackTomorrow(status model.ProjectStatusView) []string {
-	items := []string{}
-	if status.Modified > 0 {
-		items = append(items, "[ ] review modified files")
-	}
-	if status.Untracked > 0 {
-		items = append(items, "[ ] decide whether to add new files")
-	}
-	if status.Behind > 0 {
-		items = append(items, fmt.Sprintf("[ ] sync %d commit(s) from upstream", status.Behind))
-	}
-	if len(items) == 0 {
-		items = append(items, "[ ] continue next milestone")
-	}
-	return items
-}
-
 func fallbackOverview(status model.ProjectStatusView) []string {
 	lines := []string{
-		fmt.Sprintf("repo: %s", status.Name),
-		fmt.Sprintf("root: %s", status.Root),
+		fmt.Sprintf("  repo: %s", status.Name),
+		fmt.Sprintf("  root: %s", status.Root),
 	}
 	return lines
-}
-
-func fallbackWeekGoals(status model.ProjectStatusView) []string {
-	items := []string{
-		"[ ] keep branch " + status.Branch + " moving",
-		"[ ] reduce modified file count",
-	}
-	if status.Untracked > 0 {
-		items = append(items, "[ ] decide which new files belong in git")
-	}
-	return items
 }
 
 func progressBar(pct, width int) string {
@@ -1127,443 +740,115 @@ func progressBarStyled(pct, width int, filledColor, emptyColor string) string {
 }
 
 func renderProjectCard(card projectCard) string {
-	if card.Doc != nil {
-		return renderProjectDoc(card.Status, card.Doc)
-	}
-	status := card.Status
-	overviewLines := []string{fmt.Sprintf("state: %s", stateLine(status))}
-	overviewLines = append(overviewLines, card.Overview...)
-	overviewLines = append(overviewLines, fmt.Sprintf("progress: [%s] %d%%", card.Progress, card.ProgressPct))
-	overviewLines = append(overviewLines, fmt.Sprintf("activity: changed %d  docs %d  code %d  tests %d", status.Changed, status.Docs, status.Code, status.Tests))
+	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 
 	sections := []string{
-		fmt.Sprintf("project status · %s · %s", status.Name, status.Branch),
+		"project status",
 		"",
-		"overview",
+		sectionHeader.Render("[ OVERVIEW ]"),
 	}
-	sections = append(sections, overviewLines...)
-	sections = append(sections,
-		"",
-		"today task",
-	)
-	sections = append(sections, renderTodayTaskLines(card)...)
-	sections = append(sections,
-		"",
-		"tomorrow",
-	)
-	sections = append(sections, padProjectItems(card.Tomorrow)...)
-	sections = append(sections,
-		"",
-		"week goals",
-	)
-	sections = append(sections, padProjectItems(card.WeekGoals)...)
+	sections = append(sections, card.Overview...)
+	sections = append(sections, "", sectionHeader.Render("[\U0001F680 MILESTONE ]"))
+	sections = append(sections, renderMilestoneLines(card.Milestones)...)
+	sections = append(sections, "", sectionHeader.Render("[ TASKS ]"))
+	sections = append(sections, renderTaskLines(card.Tasks)...)
+	sections = append(sections, "", sectionHeader.Render("[ SUPPORT ]"))
+	sections = append(sections, renderSupportLines(card.Support)...)
+
 	return renderProjectBox(sections)
 }
 
-func renderProjectDoc(status model.ProjectStatusView, doc *yaml.Node) string {
-	root := projectDocRoot(doc)
-	lines := []string{"MindSpore Agent Project Status"}
-	if root == nil || root.Kind != yaml.MappingNode {
-		return strings.Join(lines, "\n")
+func renderMilestoneLines(milestones []projectTask) []string {
+	if len(milestones) == 0 {
+		return []string{"  (none)"}
 	}
-	topMsgColor := "white"
-	topMsgBold := true
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		keyNode := root.Content[i]
-		valueNode := root.Content[i+1]
-		keyName := strings.TrimSpace(keyNode.Value)
-		if strings.EqualFold(keyName, "top_msg") && isScalarNode(valueNode) {
-			msg := strings.TrimSpace(valueNode.Value)
-			if msg != "" {
-				lines[0] = msg
-			}
-			continue
-		}
-		if strings.EqualFold(keyName, "top_msg_color") && isScalarNode(valueNode) {
-			topMsgColor = strings.TrimSpace(valueNode.Value)
+	magenta := lipgloss.NewStyle().Foreground(lipgloss.Color("201"))
+	titleWidth := 0
+	for _, m := range milestones {
+		if l := len(m.Title); l > titleWidth {
+			titleWidth = l
 		}
 	}
-	lines[0] = applyProjectStyle(lines[0], topMsgColor, topMsgBold)
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		keyNode := root.Content[i]
-		valueNode := root.Content[i+1]
-		keyName := strings.TrimSpace(keyNode.Value)
-		if strings.EqualFold(keyName, "top_msg") || strings.EqualFold(keyName, "top_msg_color") {
-			continue
-		}
-		sectionKind := projectSectionKind(keyName)
-		title := styleProjectSectionTitle(normalizeSectionTitle(keyNode.Value), sectionKind)
-		body := valueNode
-		if _, suffix, wrapped := sectionHeaderMeta(valueNode); wrapped != nil {
-			if strings.TrimSpace(suffix) != "" {
-				title += " [" + strings.TrimSpace(suffix) + "]"
-			}
-			body = wrapped
-		}
-		lines = append(lines, "")
-		lines = append(lines, title)
-		lines = append(lines, renderProjectValueLines(body, "  ", projectStructuredWidths{}, sectionKind)...)
+	if titleWidth < 12 {
+		titleWidth = 12
 	}
-
-	return renderProjectBox(lines)
+	lines := make([]string, 0, len(milestones))
+	for _, m := range milestones {
+		bar := progressBar(m.Progress, 10)
+		line := fmt.Sprintf("  %-*s [%s] %3d%%",
+			titleWidth, m.Title, bar, m.Progress)
+		lines = append(lines, magenta.Render(line))
+	}
+	return lines
 }
 
-func projectDocRoot(doc *yaml.Node) *yaml.Node {
-	if doc == nil {
-		return nil
+func renderTaskLines(tasks []projectTask) []string {
+	if len(tasks) == 0 {
+		return []string{"  (none)"}
 	}
-	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
-		return doc.Content[0]
+	// Sort by progress ascending — less progress on top, 100% at bottom.
+	sort.SliceStable(tasks, func(i, j int) bool {
+		return tasks[i].Progress < tasks[j].Progress
+	})
+	yellow := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
+
+	titleWidth := 0
+	ownerWidth := 0
+	dueWidth := 0
+	for _, t := range tasks {
+		if l := len(t.Title); l > titleWidth {
+			titleWidth = l
+		}
+		if l := len(t.Owner); l > ownerWidth {
+			ownerWidth = l
+		}
+		if l := len(t.Due); l > dueWidth {
+			dueWidth = l
+		}
 	}
-	return doc
+	if titleWidth < 12 {
+		titleWidth = 12
+	}
+
+	lines := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		marker := taskStatusMarker(task.Status, task.Progress)
+		bar := progressBar(task.Progress, 10)
+
+		coloredPart := fmt.Sprintf("#%-3s %s %-*s   [%s] %3d%%",
+			task.ID, marker, titleWidth, task.Title, bar, task.Progress)
+
+		owner := fmt.Sprintf("%-*s", ownerWidth, task.Owner)
+		due := fmt.Sprintf("%-*s", dueWidth, task.Due)
+		dimPart := "   " + owner + "   " + due
+
+		switch {
+		case task.Progress >= 100 || normalizeTaskStatus(task.Status) == "done":
+			lines = append(lines, "  "+green.Render(coloredPart)+dimPart)
+		case task.Progress > 0:
+			lines = append(lines, "  "+yellow.Render(coloredPart)+dimPart)
+		default:
+			lines = append(lines, "  "+coloredPart+dimPart)
+		}
+	}
+	return lines
 }
 
-func normalizeSectionTitle(key string) string {
-	key = strings.ReplaceAll(strings.TrimSpace(key), "_", " ")
-	if key == "" {
-		return "section"
+func renderSupportLines(items []string) []string {
+	if len(items) == 0 {
+		return []string{"  (none)"}
 	}
-	return key
-}
-
-func renderProjectValueLines(node *yaml.Node, indent string, widths projectStructuredWidths, sectionKind string) []string {
-	if node == nil {
-		return nil
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		lines = append(lines, "  ✓ "+item)
 	}
-	switch node.Kind {
-	case yaml.MappingNode:
-		lines := []string{}
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			keyNode := node.Content[i]
-			valueNode := node.Content[i+1]
-			keyName := strings.TrimSpace(keyNode.Value)
-			if strings.EqualFold(keyName, "color") || strings.EqualFold(keyName, "date") || strings.EqualFold(keyName, "title_suffix") {
-				continue
-			}
-			if strings.EqualFold(keyName, "items") {
-				lines = append(lines, renderProjectValueLines(valueNode, indent, widths, sectionKind)...)
-				continue
-			}
-			key := normalizeSectionTitle(keyNode.Value)
-			if isScalarNode(valueNode) {
-				lines = append(lines, indent+styleProjectMappingKey(key, sectionKind)+": "+renderScalarValue(keyNode.Value, valueNode.Value))
-				continue
-			}
-			lines = append(lines, indent+styleProjectMappingKey(key, sectionKind)+":")
-			lines = append(lines, renderProjectValueLines(valueNode, indent+"  ", widths, sectionKind)...)
-		}
-		return lines
-	case yaml.SequenceNode:
-		lines := []string{}
-		localWidths := structuredSequenceWidths(node)
-		for _, item := range node.Content {
-			if structured, ok := renderStructuredProjectItem(item, indent, localWidths, sectionKind); ok {
-				lines = append(lines, structured)
-				continue
-			}
-			if isScalarNode(item) {
-				text := item.Value
-				if sectionKind == projectSectionTodo {
-					text = applyProjectStyle(text, "gray", false)
-				}
-				lines = append(lines, indent+"- "+text)
-				continue
-			}
-			lines = append(lines, indent+"-")
-			lines = append(lines, renderProjectValueLines(item, indent+"  ", widths, sectionKind)...)
-		}
-		return lines
-	case yaml.ScalarNode:
-		return []string{indent + renderScalarValue("", node.Value)}
-	default:
-		return nil
-	}
+	return lines
 }
 
 const (
-	projectSectionDefault    = "default"
-	projectSectionOverview   = "overview"
-	projectSectionMilestones = "milestones"
-	projectSectionTasks      = "tasks"
-	projectSectionTodo       = "todo"
+	projectSectionTasks = "tasks"
 )
-
-func projectSectionKind(key string) string {
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "overview":
-		return projectSectionOverview
-	case "milestone", "milestones":
-		return projectSectionMilestones
-	case "task", "tasks", "today", "today_task", "today_tasks":
-		return projectSectionTasks
-	case "todo":
-		return projectSectionTodo
-	default:
-		return projectSectionDefault
-	}
-}
-
-func styleProjectSectionTitle(title, sectionKind string) string {
-	switch sectionKind {
-	case projectSectionMilestones:
-		return applyProjectStyle("[ 🚀 "+strings.ToUpper(title)+" ]", "white", true)
-	default:
-		return applyProjectStyle("[ "+strings.ToUpper(title)+" ]", "white", true)
-	}
-}
-
-func styleProjectMappingKey(key, sectionKind string) string {
-	return key
-}
-
-type projectStructuredWidths struct {
-	Title   int
-	Owner   int
-	DueDate int
-}
-
-func structuredSequenceWidths(node *yaml.Node) projectStructuredWidths {
-	widths := projectStructuredWidths{}
-	collectProjectStructuredWidths(node, &widths)
-	if widths.Title < 12 {
-		widths.Title = 12
-	}
-	return widths
-}
-
-func collectProjectStructuredWidths(node *yaml.Node, widths *projectStructuredWidths) {
-	if node == nil {
-		return
-	}
-	switch node.Kind {
-	case yaml.DocumentNode:
-		for _, child := range node.Content {
-			collectProjectStructuredWidths(child, widths)
-		}
-	case yaml.MappingNode:
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			keyNode := node.Content[i]
-			valueNode := node.Content[i+1]
-			if strings.EqualFold(strings.TrimSpace(keyNode.Value), "color") {
-				continue
-			}
-			collectProjectStructuredWidths(valueNode, widths)
-		}
-	case yaml.SequenceNode:
-		for _, item := range node.Content {
-			if item != nil && item.Kind == yaml.MappingNode {
-				fields := orderedNodeFields(item)
-				title := firstNonEmptyField(fields, "title", "name", "task", "label")
-				if title == "" {
-					title = firstScalarField(fields)
-				}
-				if len(title) > widths.Title {
-					widths.Title = len(title)
-				}
-				if owner := fieldValue(fields, "owner"); owner != "" {
-					ownerText := "owner: " + owner
-					if len(ownerText) > widths.Owner {
-						widths.Owner = len(ownerText)
-					}
-				}
-				if dueDate := fieldValue(fields, "due-date", "due_date"); dueDate != "" {
-					dueText := "due-date: " + dueDate
-					if len(dueText) > widths.DueDate {
-						widths.DueDate = len(dueText)
-					}
-				}
-			}
-			collectProjectStructuredWidths(item, widths)
-		}
-	}
-}
-
-func renderStructuredProjectItem(node *yaml.Node, indent string, widths projectStructuredWidths, sectionKind string) (string, bool) {
-	if node == nil || node.Kind != yaml.MappingNode {
-		return "", false
-	}
-	fields := orderedNodeFields(node)
-	if len(fields) == 0 {
-		return "", false
-	}
-
-	title := firstNonEmptyField(fields, "title", "name", "task", "label")
-	status := fieldValue(fields, "status")
-	progress := fieldValue(fields, "progress")
-	owner := fieldValue(fields, "owner")
-	dueDate := fieldValue(fields, "due-date", "due_date")
-	color := fieldValue(fields, "color")
-	progressColor := fieldValue(fields, "progress_color")
-	emptyColor := fieldValue(fields, "empty_color")
-
-	if title == "" {
-		title = firstScalarField(fields)
-	}
-	if title == "" {
-		return "", false
-	}
-	if widths.Title < len(title) {
-		widths.Title = len(title)
-	}
-
-	titleText := fmt.Sprintf("%-*s", widths.Title, title)
-	switch sectionKind {
-	case projectSectionTasks:
-		if pct, ok := parsePercent(progress); ok && pct >= 100 {
-			titleText = applyProjectStyle(titleText, "green", false)
-		}
-	case projectSectionMilestones:
-		titleText = applyProjectStyle(titleText, "magenta", false)
-	case projectSectionTodo:
-		titleText = applyProjectStyle(titleText, "gray", false)
-	default:
-		if strings.TrimSpace(color) != "" {
-			titleText = applyProjectStyle(titleText, color, false)
-		}
-	}
-	pct, hasPct := parsePercent(progress)
-	marker := taskStatusMarker(sectionKind, status, pct)
-	switch sectionKind {
-	case projectSectionTodo:
-		if marker != "" {
-			marker = applyProjectStyle(marker, "gray", false)
-		}
-	case projectSectionTasks:
-		if marker != "" {
-			if normalizeTaskStatus(status) == "done" || (hasPct && pct >= 100) {
-				marker = applyProjectStyle(marker, "green", false)
-			}
-		}
-	}
-	prefix := indent + titleText
-	if marker != "" {
-		prefix = fmt.Sprintf("%s%s %s", indent, marker, titleText)
-	}
-	parts := []string{prefix}
-	if hasPct && sectionKind != projectSectionTodo {
-		barFilled := progressColor
-		barEmpty := emptyColor
-		switch sectionKind {
-		case projectSectionMilestones:
-			barFilled = "magenta"
-			barEmpty = "gray"
-		case projectSectionTasks:
-			if pct >= 100 {
-				barFilled = "green"
-				barEmpty = "gray"
-			} else {
-				if strings.TrimSpace(barEmpty) == "" {
-					barEmpty = "gray"
-				}
-			}
-		}
-		pctText := fmt.Sprintf("%3d%%", pct)
-		if strings.TrimSpace(barFilled) != "" {
-			pctText = applyProjectStyle(pctText, barFilled, false)
-		}
-		parts = append(parts, fmt.Sprintf("[%s] %s", progressBarStyled(pct, 10, barFilled, barEmpty), pctText))
-	}
-	if strings.TrimSpace(owner) != "" {
-		ownerText := "owner: " + owner
-		if widths.Owner > 0 {
-			ownerText = fmt.Sprintf("%-*s", widths.Owner, ownerText)
-		}
-		if sectionKind == projectSectionTodo {
-			ownerText = applyProjectStyle(ownerText, "gray", false)
-		}
-		parts = append(parts, ownerText)
-	}
-	if strings.TrimSpace(dueDate) != "" {
-		dueText := "due-date: " + dueDate
-		if widths.DueDate > 0 {
-			dueText = fmt.Sprintf("%-*s", widths.DueDate, dueText)
-		}
-		parts = append(parts, dueText)
-	}
-
-	for _, field := range fields {
-		k := strings.ToLower(strings.TrimSpace(field.Key))
-		if k == "title" || k == "name" || k == "task" || k == "label" || k == "status" || k == "progress" || k == "owner" || k == "due-date" || k == "due_date" || k == "color" || k == "progress_color" || k == "empty_color" {
-			continue
-		}
-		if !isScalarNode(field.Value) {
-			continue
-		}
-		parts = append(parts, normalizeSectionTitle(field.Key)+": "+field.Value.Value)
-	}
-
-	return strings.Join(parts, "  "), true
-}
-
-func structuredSequenceTitleWidth(node *yaml.Node) int {
-	if node == nil || node.Kind != yaml.SequenceNode {
-		return 0
-	}
-	width := 0
-	for _, item := range node.Content {
-		if item == nil || item.Kind != yaml.MappingNode {
-			continue
-		}
-		fields := orderedNodeFields(item)
-		title := firstNonEmptyField(fields, "title", "name", "task", "label")
-		if title == "" {
-			title = firstScalarField(fields)
-		}
-		if len(title) > width {
-			width = len(title)
-		}
-	}
-	return width
-}
-
-type nodeField struct {
-	Key   string
-	Value *yaml.Node
-}
-
-func orderedNodeFields(node *yaml.Node) []nodeField {
-	fields := make([]nodeField, 0, len(node.Content)/2)
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		fields = append(fields, nodeField{
-			Key:   node.Content[i].Value,
-			Value: node.Content[i+1],
-		})
-	}
-	return fields
-}
-
-func fieldValue(fields []nodeField, keys ...string) string {
-	for _, key := range keys {
-		for _, field := range fields {
-			if strings.EqualFold(strings.TrimSpace(field.Key), key) && isScalarNode(field.Value) {
-				return strings.TrimSpace(field.Value.Value)
-			}
-		}
-	}
-	return ""
-}
-
-func firstNonEmptyField(fields []nodeField, keys ...string) string {
-	for _, key := range keys {
-		if value := fieldValue(fields, key); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func firstScalarField(fields []nodeField) string {
-	for _, field := range fields {
-		if isScalarNode(field.Value) {
-			return strings.TrimSpace(field.Value.Value)
-		}
-	}
-	return ""
-}
-
-func isScalarNode(node *yaml.Node) bool {
-	return node != nil && node.Kind == yaml.ScalarNode
-}
 
 func parsePercent(value string) (int, bool) {
 	value = strings.TrimSpace(strings.TrimSuffix(value, "%"))
@@ -1583,83 +868,19 @@ func parsePercent(value string) (int, bool) {
 	return pct, true
 }
 
-func renderScalarValue(key, value string) string {
-	if pct, ok := parsePercent(value); ok && strings.Contains(strings.ToLower(key), "progress") {
-		return fmt.Sprintf("[%s] %d%%", progressBar(pct, 10), pct)
-	}
-	return value
-}
 
-func renderTodayTaskLines(card projectCard) []string {
-	if len(card.TodayTasks) > 0 {
-		lines := make([]string, 0, len(card.TodayTasks))
-		titleWidth := projectTaskTitleWidth(card.TodayTasks)
-		for _, task := range card.TodayTasks {
-			lines = append(lines, fmt.Sprintf("  %s %-*s | [%s] %3d%% | owner: %s",
-				taskStatusMarker(projectSectionTasks, task.Status, task.Progress),
-				titleWidth,
-				task.Title,
-				progressBar(task.Progress, 10),
-				task.Progress,
-				valueOrString(task.Owner, "-"),
-			))
-		}
-		return lines
-	}
-	return padProjectItems(card.Today)
-}
-
-func projectTaskTitleWidth(tasks []projectTask) int {
-	width := 0
-	for _, task := range tasks {
-		if l := len(task.Title); l > width {
-			width = l
-		}
-	}
-	if width < 12 {
-		return 12
-	}
-	return width
-}
-
-func taskStatusMarker(sectionKind, status string, progress int) string {
+func taskStatusMarker(status string, progress int) string {
 	normalized := normalizeTaskStatus(status)
-	switch sectionKind {
-	case projectSectionMilestones:
-		return ""
-	case projectSectionTodo:
+	if normalized == "done" || progress >= 100 {
+		return "✓"
+	}
+	if normalized == "block" {
+		return "!"
+	}
+	if normalized == "todo" || progress <= 0 {
 		return "○"
-	default:
-		if normalized == "done" || progress >= 100 {
-			return "✓"
-		}
-		if normalized == "block" {
-			return "!"
-		}
-		if normalized == "todo" || progress <= 0 {
-			return "○"
-		}
-		return "▶"
 	}
-}
-
-func sectionHeaderMeta(node *yaml.Node) (string, string, *yaml.Node) {
-	if node == nil || node.Kind != yaml.MappingNode {
-		return "", "", nil
-	}
-	color := fieldValue(orderedNodeFields(node), "color")
-	suffix := firstNonEmptyField(orderedNodeFields(node), "date", "title_suffix")
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		keyNode := node.Content[i]
-		valueNode := node.Content[i+1]
-		if strings.EqualFold(strings.TrimSpace(keyNode.Value), "items") {
-			return color, suffix, valueNode
-		}
-	}
-	if strings.TrimSpace(color) == "" && strings.TrimSpace(suffix) == "" {
-		return "", "", nil
-	}
-	return color, suffix, node
+	return "▶"
 }
 
 func applyProjectColor(text, color string) string {
@@ -1741,15 +962,10 @@ func stateLine(status model.ProjectStatusView) string {
 	return strings.Join(parts, "  ")
 }
 
-func padProjectItems(items []string) []string {
-	out := make([]string, 0, len(items))
-	for _, item := range items {
-		out = append(out, "  "+item)
-	}
-	return out
-}
+
 
 func renderProjectBox(lines []string) string {
+	// Width based on content — fits the longest line.
 	width := 0
 	for _, line := range lines {
 		if w := lipgloss.Width(line); w > width {
@@ -1760,28 +976,30 @@ func renderProjectBox(lines []string) string {
 		width = 24
 	}
 
+	border := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+
 	boxed := make([]string, 0, len(lines)+2)
-	boxed = append(boxed, "╭"+strings.Repeat("─", width+2)+"╮")
+	boxed = append(boxed, border.Render("╭"+strings.Repeat("─", width+2)+"╮"))
 	for i, line := range lines {
 		visible := lipgloss.Width(line)
+		right := width - visible
+		if right < 0 {
+			right = 0
+		}
 		if i == 0 {
 			left := (width - visible) / 2
 			if left < 0 {
 				left = 0
 			}
-			right := width - visible - left
+			right = width - visible - left
 			if right < 0 {
 				right = 0
 			}
-			boxed = append(boxed, "│ "+strings.Repeat(" ", left)+line+strings.Repeat(" ", right)+" │")
-			continue
+			boxed = append(boxed, border.Render("│")+" "+strings.Repeat(" ", left)+line+strings.Repeat(" ", right)+" "+border.Render("│"))
+		} else {
+			boxed = append(boxed, border.Render("│")+" "+line+strings.Repeat(" ", right)+" "+border.Render("│"))
 		}
-		pad := width - visible
-		if pad < 0 {
-			pad = 0
-		}
-		boxed = append(boxed, "│ "+line+strings.Repeat(" ", pad)+" │")
 	}
-	boxed = append(boxed, "╰"+strings.Repeat("─", width+2)+"╯")
+	boxed = append(boxed, border.Render("╰"+strings.Repeat("─", width+2)+"╯"))
 	return strings.Join(boxed, "\n")
 }

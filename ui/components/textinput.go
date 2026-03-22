@@ -21,6 +21,7 @@ type TextInput struct {
 	Model           textinput.Model
 	slashRegistry   *slash.Registry
 	showSuggestions bool
+	slashMode       bool // true once suggestions have been shown, until submit/esc
 	suggestions     []string
 	selectedIdx     int
 	history         []string
@@ -51,6 +52,7 @@ func (t TextInput) Value() string {
 func (t TextInput) Reset() TextInput {
 	t.Model.Reset()
 	t.showSuggestions = false
+	t.slashMode = false
 	t.suggestions = nil
 	t.selectedIdx = 0
 	t.historyIndex = -1
@@ -115,6 +117,7 @@ func (t TextInput) Update(msg tea.Msg) (TextInput, tea.Cmd) {
 			case "esc":
 				// Cancel suggestions
 				t.showSuggestions = false
+				t.slashMode = false
 				t.suggestions = nil
 				return t, nil
 			}
@@ -160,7 +163,9 @@ func (t TextInput) PrevHistory() TextInput {
 	}
 	t.Model.SetValue(t.history[t.historyIndex])
 	t.Model.SetCursor(len(t.history[t.historyIndex]))
-	t.updateSuggestions()
+	t.showSuggestions = false
+	t.slashMode = false
+	t.suggestions = nil
 	return t
 }
 
@@ -173,14 +178,18 @@ func (t TextInput) NextHistory() TextInput {
 		t.historyIndex++
 		t.Model.SetValue(t.history[t.historyIndex])
 		t.Model.SetCursor(len(t.history[t.historyIndex]))
-		t.updateSuggestions()
+		t.showSuggestions = false
+		t.slashMode = false
+		t.suggestions = nil
 		return t
 	}
 	t.historyIndex = -1
 	t.Model.SetValue(t.historyDraft)
 	t.Model.SetCursor(len(t.historyDraft))
 	t.historyDraft = ""
-	t.updateSuggestions()
+	t.showSuggestions = false
+	t.slashMode = false
+	t.suggestions = nil
 	return t
 }
 
@@ -192,6 +201,7 @@ func (t *TextInput) updateSuggestions() {
 	// Only show suggestions if input starts with "/"
 	if !strings.HasPrefix(val, "/") {
 		t.showSuggestions = false
+		t.slashMode = false
 		t.suggestions = nil
 		t.selectedIdx = 0
 		return
@@ -200,6 +210,9 @@ func (t *TextInput) updateSuggestions() {
 	// Get suggestions
 	t.suggestions = t.slashRegistry.Suggestions(val)
 	t.showSuggestions = len(t.suggestions) > 0
+	if t.showSuggestions {
+		t.slashMode = true
+	}
 
 	// Reset selection if it's out of bounds
 	if t.selectedIdx >= len(t.suggestions) {
@@ -252,21 +265,21 @@ func (t TextInput) View() string {
 }
 
 // Height returns the total height including suggestions.
+// Once slash mode is entered, reserve a fixed height until
+// the user submits or leaves slash mode, preventing jumps.
 func (t TextInput) Height() int {
-	if !t.showSuggestions || len(t.suggestions) == 0 {
-		return 1
+	if t.slashMode {
+		return 1 + 8 // Input line + fixed suggestion area
 	}
-
-	height := 1 // Input line
-	if len(t.suggestions) > 8 {
-		height += 8
-	} else {
-		height += len(t.suggestions)
-	}
-	return height
+	return 1
 }
 
 // IsSlashMode returns true if showing slash suggestions.
 func (t TextInput) IsSlashMode() bool {
 	return t.showSuggestions
+}
+
+// HasSuggestions returns true if there are visible suggestion candidates.
+func (t TextInput) HasSuggestions() bool {
+	return t.showSuggestions && len(t.suggestions) > 0
 }

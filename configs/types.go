@@ -25,6 +25,8 @@ type IssuesConfig struct {
 	TokenPath string `yaml:"token_path,omitempty"`
 }
 
+const DefaultIssuesServerURL = "http://localhost:9473"
+
 func (c *Config) normalize() {
 	if strings.TrimSpace(c.Model.Provider) == "" {
 		c.Model.Provider = "openai-compatible"
@@ -157,6 +159,9 @@ func DefaultConfig() *Config {
 			Revision:  "main",
 			CacheDir:  ".cache/skills",
 			Workflows: []string{},
+		},
+		Issues: IssuesConfig{
+			ServerURL: DefaultIssuesServerURL,
 		},
 		Execution: ExecutionConfig{
 			Mode:           "local",

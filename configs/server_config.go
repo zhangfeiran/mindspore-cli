@@ -42,7 +42,7 @@ func LoadServerConfig(path string) (*ServerConfig, error) {
 		return nil, fmt.Errorf("parse server config %q: %w", path, err)
 	}
 	if cfg.Server.Addr == "" {
-		cfg.Server.Addr = ":8080"
+		cfg.Server.Addr = ":9473"
 	}
 	if cfg.Storage.Driver == "" {
 		cfg.Storage.Driver = "sqlite"

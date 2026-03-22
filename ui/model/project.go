@@ -1,10 +1,5 @@
 package model
 
-const (
-	ProjectModeOpen  EventType = "ProjectModeOpen"
-	ProjectModeClose EventType = "ProjectModeClose"
-)
-
 type ProjectStatusView struct {
 	Name      string
 	Root      string
@@ -20,9 +15,4 @@ type ProjectStatusView struct {
 	Docs      int
 	Code      int
 	Tests     int
-}
-
-type ProjectViewState struct {
-	Active bool
-	Status ProjectStatusView
 }
