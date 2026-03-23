@@ -40,7 +40,7 @@ var hints = []hint{
 }
 
 // RenderHintBar renders the bottom keybinding hint bar.
-func RenderHintBar(width int) string {
+func RenderHintBar(width int, releaseNote string) string {
 	divider := hintDividerStyle.Render(repeatChar("━", width))
 
 	parts := make([]string, len(hints))
@@ -55,6 +55,11 @@ func RenderHintBar(width int) string {
 			line += sep
 		}
 		line += p
+	}
+
+	if releaseNote != "" {
+		noteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
+		line += "    " + noteStyle.Render(releaseNote)
 	}
 
 	return divider + "\n" + line

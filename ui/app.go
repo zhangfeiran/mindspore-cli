@@ -580,6 +580,9 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	case model.IssueUserUpdate:
 		a.state = a.state.WithIssueUser(ev.Message)
 
+	case model.ReleaseNoteUpdate:
+		a.state.ReleaseNote = ev.Message
+
 	// ── Train events ──────────────────────────────────────────
 
 	case model.TrainModeOpen:
@@ -1929,7 +1932,7 @@ func (a App) View() string {
 		queueBanner = queueBannerStyle.Render("messages queued (press esc to interrupt)")
 	}
 	input := "  " + a.input.View()
-	hintBar := panels.RenderHintBar(a.width)
+	hintBar := panels.RenderHintBar(a.width, a.state.ReleaseNote)
 
 	parts := []string{topBar}
 	if a.trainView.Active {
