@@ -376,10 +376,11 @@ func (m *Manager) compactLocked() error {
 		// 简单压缩
 		keepCount := m.config.MaxHistoryRounds * 2
 		if keepCount < len(m.messages) {
-			removed := len(m.messages) - keepCount
+			kept := keepRecentMessages(m.messages, keepCount)
+			removed := len(m.messages) - len(kept)
 			summary := fmt.Sprintf("[Earlier conversation: %d messages summarized]", removed)
 			summaryMsg := llm.NewSystemMessage(summary)
-			m.messages = append([]llm.Message{summaryMsg}, m.messages[removed:]...)
+			m.messages = append([]llm.Message{summaryMsg}, kept...)
 			m.stats.CompactCount++
 			now := time.Now()
 			m.stats.LastCompactAt = &now
@@ -404,8 +405,7 @@ func (m *Manager) emergencyCompactLocked() error {
 	}
 
 	if len(m.messages) > keepCount {
-		removed := len(m.messages) - keepCount
-		m.messages = m.messages[removed:]
+		m.messages = keepRecentMessages(m.messages, keepCount)
 		m.stats.CompactCount++
 		now := time.Now()
 		m.stats.LastCompactAt = &now
@@ -482,6 +482,6 @@ func (m *Manager) TruncateTo(count int) {
 		return
 	}
 
-	m.messages = m.messages[len(m.messages)-count:]
+	m.messages = keepRecentMessages(m.messages, count)
 	m.recalculateUsage()
 }

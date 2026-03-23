@@ -29,7 +29,7 @@ func (c *openAIResponsesCodec) encodeRequest(req *CompletionRequest, stream bool
 		model = "gpt-4o-mini"
 	}
 
-	instructions, input := c.encodeMessages(req.Messages)
+	instructions, input := c.encodeMessages(req.Messages, strings.TrimSpace(previousResponseID) != "")
 	encodedTools := c.encodeTools(req.Tools)
 
 	return openAIResponsesRequest{
@@ -45,13 +45,14 @@ func (c *openAIResponsesCodec) encodeRequest(req *CompletionRequest, stream bool
 	}, nil
 }
 
-func (c *openAIResponsesCodec) encodeMessages(msgs []Message) (string, []openAIResponsesInputItem) {
+func (c *openAIResponsesCodec) encodeMessages(msgs []Message, allowOrphanToolOutputs bool) (string, []openAIResponsesInputItem) {
 	if len(msgs) == 0 {
 		return "", nil
 	}
 
 	systemParts := make([]string, 0, len(msgs))
 	items := make([]openAIResponsesInputItem, 0, len(msgs))
+	seenCallIDs := make(map[string]struct{})
 
 	for _, msg := range msgs {
 		switch msg.Role {
@@ -60,12 +61,18 @@ func (c *openAIResponsesCodec) encodeMessages(msgs []Message) (string, []openAIR
 				systemParts = append(systemParts, text)
 			}
 		case "tool":
-			if strings.TrimSpace(msg.ToolCallID) == "" {
+			callID := strings.TrimSpace(msg.ToolCallID)
+			if callID == "" {
 				continue
+			}
+			if !allowOrphanToolOutputs {
+				if _, ok := seenCallIDs[callID]; !ok {
+					continue
+				}
 			}
 			items = append(items, openAIResponsesInputItem{
 				Type:   "function_call_output",
-				CallID: msg.ToolCallID,
+				CallID: callID,
 				Output: msg.Content,
 			})
 		default:
@@ -77,9 +84,14 @@ func (c *openAIResponsesCodec) encodeMessages(msgs []Message) (string, []openAIR
 				})
 			}
 			for _, call := range msg.ToolCalls {
+				callID := strings.TrimSpace(call.ID)
+				if callID == "" {
+					continue
+				}
+				seenCallIDs[callID] = struct{}{}
 				items = append(items, openAIResponsesInputItem{
 					Type:      "function_call",
-					CallID:    call.ID,
+					CallID:    callID,
 					Name:      call.Function.Name,
 					Arguments: string(call.Function.Arguments),
 				})
