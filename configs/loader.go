@@ -14,6 +14,9 @@ import (
 func LoadWithEnv() (*Config, error) {
 	cfg := DefaultConfig()
 
+	// Auto-generate user config on first run if it doesn't exist.
+	ensureUserConfig(cfg)
+
 	// Fixed config layers: defaults -> user -> project -> env.
 	if err := mergeConfigFile(cfg, userConfigPath()); err != nil {
 		return nil, err
@@ -109,6 +112,11 @@ func ApplyEnvOverrides(cfg *Config) {
 		}
 	}
 
+	// Issues server
+	if v := strings.TrimSpace(os.Getenv("MSCLI_SERVER_URL")); v != "" {
+		cfg.Issues.ServerURL = v
+	}
+
 	// Memory settings
 	if v := os.Getenv("MSCLI_MEMORY_ENABLED"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -163,6 +171,17 @@ func StringSliceEnv(key string) []string {
 		parts[i] = strings.TrimSpace(p)
 	}
 	return parts
+}
+
+func ensureUserConfig(cfg *Config) {
+	path := userConfigPath()
+	if path == "" {
+		return
+	}
+	if _, err := os.Stat(path); err == nil {
+		return // already exists
+	}
+	_ = SaveToFile(cfg, path)
 }
 
 func userConfigPath() string {
