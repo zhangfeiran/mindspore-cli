@@ -13,6 +13,8 @@ import (
 // LoadWithEnv loads configuration from file and applies environment variable overrides.
 func LoadWithEnv() (*Config, error) {
 	cfg := DefaultConfig()
+	defaultModelMaxTokens := cfg.Model.MaxTokens
+	defaultContextWindow := cfg.Context.Window
 
 	// Auto-generate user config on first run if it doesn't exist.
 	ensureUserConfig(cfg)
@@ -27,7 +29,8 @@ func LoadWithEnv() (*Config, error) {
 		return nil, err
 	}
 
-	// ENV > project > user > default
+	// defaults-by-model > ENV > project > user > default
+	applyModelTokenDefaults(cfg, defaultModelMaxTokens, defaultContextWindow)
 	ApplyEnvOverrides(cfg)
 	cfg.normalize()
 
@@ -103,7 +106,7 @@ func ApplyEnvOverrides(cfg *Config) {
 	// Context settings
 	if v := os.Getenv("MSCLI_CONTEXT_WINDOW"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Context.MaxTokens = i
+			cfg.Context.Window = i
 		}
 	}
 	if v := os.Getenv("MSCLI_CONTEXT_RESERVE"); v != "" {

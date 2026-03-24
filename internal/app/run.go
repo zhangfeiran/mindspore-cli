@@ -48,7 +48,7 @@ func (a *Application) run() error {
 
 func (a *Application) runReal() error {
 	userCh := make(chan string, 8)
-	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.MaxTokens)
+	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.Window)
 	p := tea.NewProgram(tui, tea.WithAltScreen())
 
 	// Emit saved login so the topbar shows the user immediately.
@@ -253,21 +253,21 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 }
 
 var loopEventTypeMap = map[string]model.EventType{
-	"ToolCallStart": model.ToolCallStart,
-	"AgentReply":    model.AgentReply,
+	"ToolCallStart":   model.ToolCallStart,
+	"AgentReply":      model.AgentReply,
 	"AgentReplyDelta": model.AgentReplyDelta,
-	"AgentThinking": model.AgentThinking,
-	"ToolRead":      model.ToolRead,
-	"ToolGrep":      model.ToolGrep,
-	"ToolGlob":      model.ToolGlob,
-	"ToolEdit":      model.ToolEdit,
-	"ToolWrite":     model.ToolWrite,
-	"ToolSkill":     model.ToolSkill,
-	"ToolError":     model.ToolError,
-	"CmdStarted":    model.CmdStarted,
-	"AnalysisReady": model.AnalysisReady,
-	"TokenUpdate":   model.TokenUpdate,
-	"TaskFailed":    model.ToolError,
+	"AgentThinking":   model.AgentThinking,
+	"ToolRead":        model.ToolRead,
+	"ToolGrep":        model.ToolGrep,
+	"ToolGlob":        model.ToolGlob,
+	"ToolEdit":        model.ToolEdit,
+	"ToolWrite":       model.ToolWrite,
+	"ToolSkill":       model.ToolSkill,
+	"ToolError":       model.ToolError,
+	"CmdStarted":      model.CmdStarted,
+	"AnalysisReady":   model.AnalysisReady,
+	"TokenUpdate":     model.TokenUpdate,
+	"TaskFailed":      model.ToolError,
 }
 
 // convertLoopEvent maps loop.Event -> UI model.Event.

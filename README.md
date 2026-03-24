@@ -112,6 +112,8 @@ model:
   url: https://api.openai.com/v1
   model: gpt-4o-mini
   key: ""
+context:
+  window: 240000
 ```
 
 ### Environment variables
@@ -125,8 +127,34 @@ Use unified `MSCLI_*` names:
 - `MSCLI_TEMPERATURE`
 - `MSCLI_MAX_TOKENS`
 - `MSCLI_TIMEOUT`
+- `MSCLI_CONTEXT_WINDOW`
 
 CLI flags `--api-key`, `--url`, `--model` are startup overrides for the current run.
+
+
+
+### Model token defaults (auto + override)
+
+When `model.model` matches known families (`gpt-5*`, `claude-4*`, `glm-4.7*`, `glm-5*`, `kimi-k2.5*`, `minimax-m2.5*`, `minimax-m2.7*`), ms-cli auto-fills:
+
+- `model.max_tokens`
+- `context.window`
+
+Precedence is:
+
+1. `MSCLI_MAX_TOKENS` / `MSCLI_CONTEXT_WINDOW`
+2. explicit values in config
+3. auto defaults from model name
+4. built-in defaults
+
+You can define custom model-family defaults:
+
+```yaml
+model_profiles:
+  my-model-prefix:
+    model_max_tokens: 8192
+    context_window: 65536
+```
 
 ### Use OpenAI API
 

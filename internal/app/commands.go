@@ -422,6 +422,7 @@ Environment Variables:
   MSCLI_API_KEY           API key
   MSCLI_TEMPERATURE       Temperature
   MSCLI_MAX_TOKENS        Max completion tokens
+  MSCLI_CONTEXT_WINDOW    Context window tokens
   MSCLI_TIMEOUT           Request timeout seconds`
 
 	a.EventCh <- model.Event{Type: model.AgentReply, Message: helpText}

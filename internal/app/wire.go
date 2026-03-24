@@ -166,7 +166,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	}
 
 	ctxManager := agentctx.NewManager(agentctx.ManagerConfig{
-		MaxTokens:           config.Context.MaxTokens,
+		MaxTokens:           config.Context.Window,
 		ReserveTokens:       config.Context.ReserveTokens,
 		CompactionThreshold: config.Context.CompactionThreshold,
 		MaxHistoryRounds:    config.Context.MaxHistoryRounds,

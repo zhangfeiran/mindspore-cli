@@ -8,15 +8,16 @@ import (
 
 // Config holds the complete application configuration.
 type Config struct {
-	Model       ModelConfig       `yaml:"model"`
-	Budget      BudgetConfig      `yaml:"budget"`
-	UI          UIConfig          `yaml:"ui"`
-	Permissions PermissionsConfig `yaml:"permissions"`
-	Context     ContextConfig     `yaml:"context"`
-	Memory      MemoryConfig      `yaml:"memory"`
-	Skills      SkillsConfig      `yaml:"skills"`
-	Execution   ExecutionConfig   `yaml:"execution"`
-	Issues      IssuesConfig      `yaml:"issues"`
+	Model         ModelConfig                  `yaml:"model"`
+	ModelProfiles map[string]ModelTokenProfile `yaml:"model_profiles,omitempty"`
+	Budget        BudgetConfig                 `yaml:"budget"`
+	UI            UIConfig                     `yaml:"ui"`
+	Permissions   PermissionsConfig            `yaml:"permissions"`
+	Context       ContextConfig                `yaml:"context"`
+	Memory        MemoryConfig                 `yaml:"memory"`
+	Skills        SkillsConfig                 `yaml:"skills"`
+	Execution     ExecutionConfig              `yaml:"execution"`
+	Issues        IssuesConfig                 `yaml:"issues"`
 }
 
 // IssuesConfig holds the client-side bug/issue server connection config.
@@ -71,7 +72,7 @@ type PermissionsConfig struct {
 
 // ContextConfig holds the context management configuration.
 type ContextConfig struct {
-	MaxTokens           int     `yaml:"max_tokens"`
+	Window              int     `yaml:"window"`
 	ReserveTokens       int     `yaml:"reserve_tokens"`
 	CompactionThreshold float64 `yaml:"compaction_threshold"`
 	MaxHistoryRounds    int     `yaml:"max_history_rounds"`
@@ -142,7 +143,7 @@ func DefaultConfig() *Config {
 			BlockedTools: []string{},
 		},
 		Context: ContextConfig{
-			MaxTokens:           240000,
+			Window:              240000,
 			ReserveTokens:       4000,
 			CompactionThreshold: 0.85,
 			MaxHistoryRounds:    10,
@@ -154,6 +155,7 @@ func DefaultConfig() *Config {
 			MaxBytes:  2 * 1024 * 1024, // 2MB
 			TTLHours:  168,             // 7 days
 		},
+		ModelProfiles: make(map[string]ModelTokenProfile),
 		Skills: SkillsConfig{
 			Repo:      "https://github.com/vigo999/mindspore-skills",
 			Revision:  "refactor-arch-3.0",
@@ -204,8 +206,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("max_tokens must be non-negative")
 	}
 
-	if c.Context.MaxTokens < c.Context.ReserveTokens {
-		return fmt.Errorf("max_tokens must be greater than reserve_tokens")
+	if c.Context.Window < c.Context.ReserveTokens {
+		return fmt.Errorf("window must be greater than reserve_tokens")
 	}
 
 	return nil
@@ -238,6 +240,10 @@ func (c *Config) Merge(other *Config) {
 		c.Model.Headers = other.Model.Headers
 	}
 
+	if len(other.ModelProfiles) > 0 {
+		c.ModelProfiles = other.ModelProfiles
+	}
+
 	if other.Budget.MaxTokens != 0 {
 		c.Budget.MaxTokens = other.Budget.MaxTokens
 	}
@@ -245,8 +251,8 @@ func (c *Config) Merge(other *Config) {
 		c.Budget.MaxCostUSD = other.Budget.MaxCostUSD
 	}
 
-	if other.Context.MaxTokens != 0 {
-		c.Context.MaxTokens = other.Context.MaxTokens
+	if other.Context.Window != 0 {
+		c.Context.Window = other.Context.Window
 	}
 	if other.Context.ReserveTokens != 0 {
 		c.Context.ReserveTokens = other.Context.ReserveTokens
@@ -257,4 +263,30 @@ func (c *Config) Merge(other *Config) {
 	if other.Context.MaxHistoryRounds != 0 {
 		c.Context.MaxHistoryRounds = other.Context.MaxHistoryRounds
 	}
+}
+
+// UnmarshalYAML supports both context.window and legacy context.max_tokens.
+func (c *ContextConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type rawContextConfig struct {
+		Window              int     `yaml:"window"`
+		LegacyMaxTokens     int     `yaml:"max_tokens"`
+		ReserveTokens       int     `yaml:"reserve_tokens"`
+		CompactionThreshold float64 `yaml:"compaction_threshold"`
+		MaxHistoryRounds    int     `yaml:"max_history_rounds"`
+	}
+
+	var raw rawContextConfig
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+
+	c.Window = raw.Window
+	if c.Window == 0 {
+		c.Window = raw.LegacyMaxTokens
+	}
+	c.ReserveTokens = raw.ReserveTokens
+	c.CompactionThreshold = raw.CompactionThreshold
+	c.MaxHistoryRounds = raw.MaxHistoryRounds
+
+	return nil
 }
