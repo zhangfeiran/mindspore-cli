@@ -143,7 +143,6 @@ func TestCmdProjectStreamsFormattedSnapshot(t *testing.T) {
 
 	ev := drainUntilEventType(t, app, model.AgentReply)
 	for _, want := range []string{
-		"project status",
 		"phase: refactor",
 		"owner: travis",
 		"repo: github.com/vigo999/ms-cli",
@@ -151,7 +150,8 @@ func TestCmdProjectStreamsFormattedSnapshot(t *testing.T) {
 		"project status command",
 		"status schema draft",
 		"define schema",
-		"╭", "│", "╰",
+		"[ OVERVIEW ]",
+		"[ TASKS ]",
 	} {
 		if !strings.Contains(ev.Message, want) {
 			t.Fatalf("expected project snapshot to contain %q, got:\n%s", want, ev.Message)

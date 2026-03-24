@@ -82,7 +82,7 @@ func BugList(bugs []issues.Bug) string {
 			visPad(b.Reporter, reporterW)
 		lines = append(lines, line)
 	}
-	return Box(lines)
+	return strings.Join(lines, "\n")
 }
 
 func Dock(data *issues.DockData) string {
@@ -113,5 +113,5 @@ func Dock(data *issues.DockData) string {
 		}
 	}
 
-	return Box(lines)
+	return strings.Join(lines, "\n")
 }

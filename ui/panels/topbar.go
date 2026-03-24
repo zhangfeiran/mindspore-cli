@@ -14,7 +14,7 @@ var (
 			Padding(0, 1)
 
 	brandStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("117")).
+			Foreground(lipgloss.Color("252")).
 			Bold(true)
 
 	infoStyle = lipgloss.NewStyle().
@@ -40,43 +40,15 @@ var (
 // RenderTopBar renders the top status bar.
 // When showBanner is true, a second line with workdir + repo is shown.
 func RenderTopBar(s model.State, width int) string {
-	sep := sepStyle.Render("│")
-
-	// Line 1: brand + model info (always shown)
-	left := brandStyle.Render(s.Version)
-	right := strings.Join([]string{
-		infoStyle.Render("model:"),
-		infoStyle.Render(s.Model.Name),
-		sep,
-		infoStyle.Render(fmt.Sprintf("ctx: %s/%s", formatTokens(s.Model.CtxUsed), formatTokens(s.Model.CtxMax))),
-		sep,
-		infoStyle.Render(fmt.Sprintf("tokens: %s", formatTokens(s.Model.TokensUsed))),
-	}, " ")
-
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-	if gap < 1 {
-		gap = 1
+	content := brandStyle.Render(s.Version)
+	lineWidth := lipgloss.Width(content)
+	padding := 0
+	if width > lineWidth {
+		padding = (width - lineWidth) / 2
 	}
-	pad := lipgloss.NewStyle().Width(gap).Render("")
-	line1 := topBarStyle.Render(left + pad + right)
+	line1 := topBarStyle.Render(strings.Repeat(" ", padding) + content)
 
-	divider := dividerStyle.Render(repeatChar("━", width))
-
-	// Line 2: workdir + user + repo
-	left2 := bannerLabelStyle.Render("cwd:") + " " + bannerValueStyle.Render(shortenPath(s.WorkDir))
-	if s.IssueUser != "" {
-		left2 += " " + bannerLabelStyle.Render("user:") + " " + bannerValueStyle.Render(s.IssueUser)
-	}
-	right2 := bannerDimStyle.Render(s.RepoURL)
-
-	gap2 := width - lipgloss.Width(left2) - lipgloss.Width(right2) - 2
-	if gap2 < 1 {
-		gap2 = 1
-	}
-	pad2 := lipgloss.NewStyle().Width(gap2).Render("")
-	line2 := topBarStyle.Render(left2 + pad2 + right2)
-
-	return line1 + "\n" + line2 + "\n" + divider
+	return line1
 }
 
 func shortenPath(p string) string {

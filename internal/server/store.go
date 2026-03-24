@@ -108,7 +108,7 @@ func (s *Store) ListBugs(status string) ([]issues.Bug, error) {
 		query += ` WHERE status = ?`
 		args = append(args, status)
 	}
-	query += ` ORDER BY created_at DESC`
+	query += ` ORDER BY updated_at DESC`
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -158,6 +158,26 @@ func (s *Store) ClaimBug(id int, lead string) error {
 	_, err = s.db.Exec(
 		`INSERT INTO activities (bug_id, actor, type, text, created_at) VALUES (?, ?, 'claim', ?, ?)`,
 		id, lead, fmt.Sprintf("%s claimed bug", lead), now,
+	)
+	return err
+}
+
+func (s *Store) CloseBug(id int, user string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.Exec(
+		`UPDATE bugs SET status = 'closed', updated_at = ? WHERE id = ?`,
+		now, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("bug %d not found", id)
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO activities (bug_id, actor, type, text, created_at) VALUES (?, ?, 'close', ?, ?)`,
+		id, user, fmt.Sprintf("%s closed bug", user), now,
 	)
 	return err
 }

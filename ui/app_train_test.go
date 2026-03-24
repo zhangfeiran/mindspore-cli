@@ -122,7 +122,7 @@ func TestTrainViewUsesSharedChatSurface(t *testing.T) {
 	if strings.Contains(view, "setup env") {
 		t.Fatalf("expected old train panel layout to be gone, got:\n%s", view)
 	}
-	if !strings.Contains(view, "> ") {
+	if !strings.Contains(view, app.input.Model.Prompt) {
 		t.Fatalf("expected global composer to stay visible, got:\n%s", view)
 	}
 }
@@ -329,6 +329,58 @@ func TestUpDownRecallInputHistoryInsteadOfScrollingViewport(t *testing.T) {
 	app = next.(App)
 	if got := app.input.Value(); got != "second message" {
 		t.Fatalf("expected down to move forward in history, got %q", got)
+	}
+}
+
+func TestUpDownContinueHistoryAcrossSlashCommandsWithoutEnteringSuggestionNavigation(t *testing.T) {
+	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+
+	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	app = next.(App)
+
+	app.input.Model.SetValue("/project")
+	next, _ = app.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	app = next.(App)
+
+	app.input.Model.SetValue("hello")
+	next, _ = app.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	app = next.(App)
+
+	app.input.Model.SetValue("draft")
+	app.input.Model.SetCursor(len("draft"))
+
+	next, _ = app.handleKey(tea.KeyMsg{Type: tea.KeyUp})
+	app = next.(App)
+	if got := app.input.Value(); got != "hello" {
+		t.Fatalf("expected first up to recall latest history entry, got %q", got)
+	}
+	if app.input.IsSlashMode() {
+		t.Fatal("expected no slash suggestions while browsing history")
+	}
+
+	next, _ = app.handleKey(tea.KeyMsg{Type: tea.KeyUp})
+	app = next.(App)
+	if got := app.input.Value(); got != "/project" {
+		t.Fatalf("expected second up to recall slash history entry, got %q", got)
+	}
+	if app.input.IsSlashMode() {
+		t.Fatal("expected slash history recall not to enter suggestion navigation")
+	}
+
+	next, _ = app.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	app = next.(App)
+	if got := app.input.Value(); got != "hello" {
+		t.Fatalf("expected down to keep moving forward in history, got %q", got)
+	}
+
+	next, _ = app.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	app = next.(App)
+	if got := app.input.Value(); got != "draft" {
+		t.Fatalf("expected second down to restore draft, got %q", got)
+	}
+	if app.input.IsSlashMode() {
+		t.Fatal("expected restored draft to stay out of slash suggestion mode")
 	}
 }
 

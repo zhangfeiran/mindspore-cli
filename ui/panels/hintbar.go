@@ -2,6 +2,7 @@ package panels
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -13,17 +14,17 @@ var (
 				Foreground(lipgloss.Color("238"))
 
 	hintTextStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
+			Foreground(lipgloss.Color("244")).
 			PaddingLeft(1)
 
 	hintKeyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("250"))
+			Foreground(lipgloss.Color("244"))
 
 	hintDescStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
+			Foreground(lipgloss.Color("244"))
 
 	hintSepStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("238"))
+			Foreground(lipgloss.Color("244"))
 )
 
 type hint struct {
@@ -39,35 +40,60 @@ var hints = []hint{
 	{"ctrl+c", "quit"},
 }
 
-// RenderHintBar renders the bottom keybinding hint bar.
-func RenderHintBar(width int, releaseNote string) string {
-	divider := hintDividerStyle.Render(repeatChar("━", width))
+// RenderHintBar renders the bottom status bar with model, context, and workdir.
+func RenderHintBar(s model.State, width int) string {
+	sep := hintSepStyle.Render("  ")
+	left := hintKeyStyle.Render(s.Model.Name) + sep +
+		hintDescStyle.Render(fmt.Sprintf("ctx: %s/%s", formatHintTokens(s.Model.CtxUsed), formatHintTokens(s.Model.CtxMax))) + sep +
+		hintDescStyle.Render(shortenHintPath(s.WorkDir))
 
-	parts := make([]string, len(hints))
-	for i, h := range hints {
-		parts[i] = hintKeyStyle.Render(h.key) + " " + hintDescStyle.Render(h.desc)
+	if s.IssueUser != "" {
+		left += sep + hintDescStyle.Render("user: "+s.IssueUser)
 	}
 
-	sep := hintSepStyle.Render(" • ")
-	line := hintTextStyle.Render("")
-	for i, p := range parts {
-		if i > 0 {
-			line += sep
-		}
-		line += p
-	}
-
-	if releaseNote != "" {
+	right := ""
+	if s.ReleaseNote != "" {
 		noteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
-		line += "    " + noteStyle.Render(releaseNote)
+		right = noteStyle.Render(s.ReleaseNote)
 	}
 
-	return divider + "\n" + line
+	line := " " + left
+	if right != "" {
+		gap := width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+		if gap < 1 {
+			gap = 1
+		}
+		line += strings.Repeat(" ", gap) + right
+	}
+
+	return line
+}
+
+func formatHintTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+func shortenHintPath(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if strings.HasPrefix(p, home) {
+		return "~" + p[len(home):]
+	}
+	return p
 }
 
 // RenderTrainHUDHintBar renders compact train controls while chat remains global.
 func RenderTrainHUDHintBar(width int) string {
-	divider := hintDividerStyle.Render(repeatChar("━", width))
+	divider := hintDividerStyle.Render(repeatChar("─", width))
 	trainHints := []hint{
 		{"/", "commands"},
 		{"tab", "next action"},
@@ -95,10 +121,50 @@ func RenderTrainHUDHintBar(width int) string {
 	return divider + "\n" + line + indicator
 }
 
+func RenderBugHintBar(width int, mode model.BugMode) string {
+	divider := hintDividerStyle.Render(repeatChar("─", width))
+
+	bugHints := []hint{{"esc", "back"}, {"ctrl+c", "quit"}}
+	switch mode {
+	case model.BugModeIndex:
+		bugHints = []hint{
+			{"↑/↓", "move"},
+			{"j/k", "move"},
+			{"enter", "open"},
+			{"c", "claim"},
+			{"esc", "back"},
+			{"ctrl+c", "quit"},
+		}
+	case model.BugModeDetail:
+		bugHints = []hint{
+			{"c", "claim"},
+			{"C", "close"},
+			{"esc", "back"},
+			{"ctrl+c", "quit"},
+		}
+	}
+
+	parts := make([]string, len(bugHints))
+	for i, h := range bugHints {
+		parts[i] = hintKeyStyle.Render(h.key) + " " + hintDescStyle.Render(h.desc)
+	}
+
+	sep := hintSepStyle.Render(" • ")
+	line := hintTextStyle.Render("")
+	for i, p := range parts {
+		if i > 0 {
+			line += sep
+		}
+		line += p
+	}
+
+	return divider + "\n" + line + hintDescStyle.Render("  [bugs]")
+}
+
 // RenderTrainHintBar renders the hint bar for the train workspace with focus context.
 func RenderTrainHintBar(width int, focused model.TrainPanelID, opts ...bool) string {
 	maximized := len(opts) > 0 && opts[0]
-	divider := hintDividerStyle.Render(repeatChar("━", width))
+	divider := hintDividerStyle.Render(repeatChar("─", width))
 
 	var trainHints []hint
 	trainHints = append(trainHints, hint{"Tab", "cycle panels"})

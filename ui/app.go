@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	topBarHeight              = 3 // brand line + info line + divider
-	chatLineHeight            = 2
-	hintBarHeight             = 2
+	topBarHeight              = 1 // brand line only
+	chatLineHeight            = 0
+	hintBarHeight             = 1
 	inputHeight               = 1
+	bottomSafePadding         = 2
 	verticalPad               = 2
 	bootDuration              = 2 * time.Second
 	bootTickRate              = 80 * time.Millisecond
@@ -111,8 +112,9 @@ type App struct {
 	mouseEnabled  bool
 
 	// Train mode
-	trainView   model.TrainViewState
-	trainFocus  model.TrainPanelID
+	trainView     model.TrainViewState
+	trainFocus    model.TrainPanelID
+	bugView       model.BugViewState
 	bootActive    bool
 	bootHighlight int
 	queuedInputs  []string
@@ -156,6 +158,7 @@ func (a App) chatHeight() int {
 	h := a.height - topBarHeight - chatLineHeight - hintBarHeight - a.input.Height()
 	h -= a.activeHUDHeight()
 	h -= a.queueBannerHeight()
+	h -= bottomSafePadding
 	if h < 1 {
 		return 1
 	}
@@ -250,6 +253,26 @@ func (a *App) resizeActiveLayout() {
 }
 
 func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		now := time.Now()
+		if now.Sub(a.lastInterrupt) < time.Second {
+			return a, tea.Quit
+		}
+		a.lastInterrupt = now
+		a.input = a.input.Reset()
+		a.resizeActiveLayout()
+		a.state = a.state.WithMessage(model.Message{
+			Kind:    model.MsgAgent,
+			Content: "Interrupted. Press Ctrl+C again within 1 second to exit.",
+		})
+		a.updateViewport()
+		return a, nil
+	}
+
+	if a.bugView.Active() {
+		return a.handleBugKey(msg)
+	}
+
 	// Check if we're in slash suggestion mode
 	if a.input.IsSlashMode() {
 		switch msg.String() {
@@ -319,23 +342,6 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "ctrl+c":
-		now := time.Now()
-		// If last ctrl+c was within 1 second, quit
-		if now.Sub(a.lastInterrupt) < time.Second {
-			return a, tea.Quit
-		}
-		// Otherwise, cancel current input and show hint
-		a.lastInterrupt = now
-		a.input = a.input.Reset()
-		a.resizeActiveLayout()
-		a.state = a.state.WithMessage(model.Message{
-			Kind:    model.MsgAgent,
-			Content: "Interrupted. Press Ctrl+C again within 1 second to exit.",
-		})
-		a.updateViewport()
-		return a, nil
-
 	case "esc":
 		if len(a.queuedInputs) > 0 && a.trainView.Active && a.isTrainBusy() && strings.TrimSpace(a.input.Value()) == "" && a.userCh != nil {
 			select {
@@ -461,6 +467,11 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	switch ev.Type {
 	case model.UserInput:
 		a.state = a.state.WithMessage(model.Message{Kind: model.MsgUser, Content: ev.Message})
+	case model.BugIndexOpen:
+		a.openBugIndex(ev.BugView)
+
+	case model.BugDetailOpen:
+		a.openBugDetail(ev.BugView)
 
 	case model.AgentThinking:
 		a.state = a.state.WithThinking(true)
@@ -470,6 +481,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 
 	case model.AgentReply:
 		a.state = a.state.WithThinking(false)
+		a.input = a.input.ClearSlashMode()
 		content := ev.Message
 		if ev.Train != nil && ev.Train.IsDiff {
 			content = formatDiffLine(ev.Message)
@@ -2030,16 +2042,18 @@ func (a App) View() string {
 	if a.bootActive {
 		return panels.RenderBootScreen(a.width, a.height, a.bootHighlight)
 	}
+	if a.bugView.Active() {
+		return a.renderBugView()
+	}
 
 	topBar := panels.RenderTopBar(a.state, a.width)
-	line := a.chatLine()
 	chat := a.viewport.View()
 	queueBanner := ""
 	if len(a.queuedInputs) > 0 {
 		queueBanner = queueBannerStyle.Render("messages queued (press esc to interrupt)")
 	}
 	input := "  " + a.input.View()
-	hintBar := panels.RenderHintBar(a.width, a.state.ReleaseNote)
+	hintBar := panels.RenderHintBar(a.state, a.width)
 
 	parts := []string{topBar}
 	if a.trainView.Active {
@@ -2047,9 +2061,7 @@ func (a App) View() string {
 		hintBar = panels.RenderTrainHUDHintBar(a.width)
 	}
 	parts = append(parts,
-		line,
 		chat,
-		line,
 	)
 	if queueBanner != "" {
 		parts = append(parts, queueBanner)
@@ -2058,6 +2070,9 @@ func (a App) View() string {
 		input,
 		hintBar,
 	)
+	for i := 0; i < bottomSafePadding; i++ {
+		parts = append(parts, "")
+	}
 
 	layout := lipgloss.JoinVertical(lipgloss.Left, parts...)
 

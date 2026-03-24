@@ -470,7 +470,6 @@ func splitProjectArgs(raw string) ([]string, error) {
 	return args, nil
 }
 
-
 func parseProjectTaskOptions(args []string, _ bool) (projectTaskEdit, error) {
 	var edit projectTaskEdit
 	for i := 0; i < len(args); i++ {
@@ -515,8 +514,6 @@ func parseProjectTaskOptions(args []string, _ bool) (projectTaskEdit, error) {
 	}
 	return edit, nil
 }
-
-
 
 func collectProjectStatus(workDir string) (model.ProjectStatusView, error) {
 	root, err := runProjectGit(workDir, "rev-parse", "--show-toplevel")
@@ -743,8 +740,6 @@ func renderProjectCard(card projectCard) string {
 	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 
 	sections := []string{
-		"project status",
-		"",
 		sectionHeader.Render("[ OVERVIEW ]"),
 	}
 	sections = append(sections, card.Overview...)
@@ -755,7 +750,7 @@ func renderProjectCard(card projectCard) string {
 	sections = append(sections, "", sectionHeader.Render("[ SUPPORT ]"))
 	sections = append(sections, renderSupportLines(card.Support)...)
 
-	return renderProjectBox(sections)
+	return strings.Join(sections, "\n")
 }
 
 func renderMilestoneLines(milestones []projectTask) []string {
@@ -868,7 +863,6 @@ func parsePercent(value string) (int, bool) {
 	return pct, true
 }
 
-
 func taskStatusMarker(status string, progress int) string {
 	normalized := normalizeTaskStatus(status)
 	if normalized == "done" || progress >= 100 {
@@ -960,46 +954,4 @@ func stateLine(status model.ProjectStatusView) string {
 		parts = append(parts, fmt.Sprintf("ahead %d", status.Ahead), fmt.Sprintf("behind %d", status.Behind))
 	}
 	return strings.Join(parts, "  ")
-}
-
-
-
-func renderProjectBox(lines []string) string {
-	// Width based on content — fits the longest line.
-	width := 0
-	for _, line := range lines {
-		if w := lipgloss.Width(line); w > width {
-			width = w
-		}
-	}
-	if width < 24 {
-		width = 24
-	}
-
-	border := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
-
-	boxed := make([]string, 0, len(lines)+2)
-	boxed = append(boxed, border.Render("╭"+strings.Repeat("─", width+2)+"╮"))
-	for i, line := range lines {
-		visible := lipgloss.Width(line)
-		right := width - visible
-		if right < 0 {
-			right = 0
-		}
-		if i == 0 {
-			left := (width - visible) / 2
-			if left < 0 {
-				left = 0
-			}
-			right = width - visible - left
-			if right < 0 {
-				right = 0
-			}
-			boxed = append(boxed, border.Render("│")+" "+strings.Repeat(" ", left)+line+strings.Repeat(" ", right)+" "+border.Render("│"))
-		} else {
-			boxed = append(boxed, border.Render("│")+" "+line+strings.Repeat(" ", right)+" "+border.Render("│"))
-		}
-	}
-	boxed = append(boxed, border.Render("╰"+strings.Repeat("─", width+2)+"╯"))
-	return strings.Join(boxed, "\n")
 }

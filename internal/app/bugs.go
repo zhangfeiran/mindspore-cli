@@ -33,22 +33,65 @@ func (a *Application) cmdBugs(args []string) {
 	if !a.ensureIssueService() {
 		return
 	}
-	status := ""
+	status := "all"
 	if len(args) > 0 {
 		status = args[0]
 	}
-	bugs, err := a.issueService.ListBugs(status)
-	if err != nil {
-		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("list bugs failed: %v", err)}
-		return
+	listStatus := status
+	if status == "all" {
+		listStatus = ""
 	}
-	if len(bugs) == 0 {
-		a.EventCh <- model.Event{Type: model.AgentReply, Message: "no bugs found."}
+	bugs, err := a.issueService.ListBugs(listStatus)
+	if err != nil {
+		a.EventCh <- model.Event{
+			Type: model.BugIndexOpen,
+			BugView: &model.BugEventData{
+				Filter: status,
+				Err:    err,
+			},
+		}
 		return
 	}
 	a.EventCh <- model.Event{
-		Type:    model.AgentReply,
-		Message: render.BugList(bugs),
+		Type: model.BugIndexOpen,
+		BugView: &model.BugEventData{
+			Filter: status,
+			Items:  bugs,
+		},
+	}
+}
+
+func (a *Application) cmdBugDetail(args []string) {
+	if !a.ensureIssueService() {
+		return
+	}
+	if len(args) == 0 {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Usage: /__bug_detail <bug-id>"}
+		return
+	}
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "invalid bug id"}
+		return
+	}
+	bug, err := a.issueService.GetBug(id)
+	if err != nil {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("get bug failed: %v", err)}
+		return
+	}
+	acts, err := a.issueService.GetActivity(id)
+	if err != nil {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("list activity failed: %v", err)}
+		return
+	}
+	a.EventCh <- model.Event{
+		Type: model.BugDetailOpen,
+		BugView: &model.BugEventData{
+			ID:        id,
+			Bug:       bug,
+			Activity:  acts,
+			FromIndex: true,
+		},
 	}
 }
 
@@ -72,6 +115,29 @@ func (a *Application) cmdClaim(args []string) {
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
 		Message: fmt.Sprintf("you claimed bug #%d", id),
+	}
+}
+
+func (a *Application) cmdClose(args []string) {
+	if !a.ensureIssueService() {
+		return
+	}
+	if len(args) == 0 {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Usage: /close <bug-id>"}
+		return
+	}
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "invalid bug id"}
+		return
+	}
+	if err := a.issueService.CloseBug(id); err != nil {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("close failed: %v", err)}
+		return
+	}
+	a.EventCh <- model.Event{
+		Type:    model.AgentReply,
+		Message: fmt.Sprintf("closed bug #%d", id),
 	}
 }
 
