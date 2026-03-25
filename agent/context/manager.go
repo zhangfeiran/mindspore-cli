@@ -272,6 +272,39 @@ func (m *Manager) TokenUsage() TokenUsage {
 	return m.usage
 }
 
+// SetTokenLimits updates the runtime context budget limits.
+func (m *Manager) SetTokenLimits(maxTokens, reserveTokens int) error {
+	if maxTokens <= 0 {
+		return fmt.Errorf("max tokens must be positive")
+	}
+	if reserveTokens < 0 {
+		return fmt.Errorf("reserve tokens must be non-negative")
+	}
+	if reserveTokens >= maxTokens {
+		return fmt.Errorf("reserve tokens must be less than max tokens")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	budget, err := NewBudget(maxTokens, m.config.Allocation)
+	if err != nil {
+		return fmt.Errorf("new budget: %w", err)
+	}
+
+	m.config.MaxTokens = maxTokens
+	m.config.ReserveTokens = reserveTokens
+	m.budget = budget
+
+	if m.system != nil {
+		m.budget.SetSystemUsage(m.tokenizer.EstimateMessage(*m.system))
+	}
+	m.budget.SetHistoryUsage(m.tokenizer.EstimateMessages(m.messages))
+	m.recalculateUsage()
+
+	return nil
+}
+
 // EstimateTokens estimates token count for messages.
 func (m *Manager) EstimateTokens(msgs []llm.Message) int {
 	return m.tokenizer.EstimateMessages(msgs)

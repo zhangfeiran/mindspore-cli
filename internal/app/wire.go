@@ -102,12 +102,14 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	if cfg.URL != "" {
 		config.Model.URL = cfg.URL
 	}
+	previousModel := config.Model.Model
 	if cfg.Model != "" {
 		config.Model.Model = cfg.Model
 	}
 	if cfg.Key != "" {
 		config.Model.Key = cfg.Key
 	}
+	configs.RefreshModelTokenDefaults(config, previousModel)
 
 	var provider llm.Provider
 	llmReady := true
@@ -256,6 +258,8 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 		return fmt.Errorf("unsupported provider: %s", providerName)
 	}
 
+	previousModel := a.Config.Model.Model
+
 	if normalizedProvider != "" {
 		a.Config.Model.Provider = normalizedProvider
 	}
@@ -266,6 +270,7 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 	if apiKey != "" {
 		a.Config.Model.Key = apiKey
 	}
+	configs.RefreshModelTokenDefaults(a.Config, previousModel)
 
 	resolveOpts := llm.ResolveOptions{
 		PreferConfigAPIKey: strings.TrimSpace(apiKey) != "",
@@ -289,6 +294,11 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 		TimeoutPerTurn: time.Duration(a.Config.Model.TimeoutSec) * time.Second,
 	}
 	newEngine := loop.NewEngine(engineCfg, provider, a.toolRegistry)
+	if a.ctxManager != nil {
+		if err := a.ctxManager.SetTokenLimits(a.Config.Context.Window, a.Config.Context.ReserveTokens); err != nil {
+			return fmt.Errorf("update context limits: %w", err)
+		}
+	}
 	newEngine.SetContextManager(a.ctxManager)
 	newEngine.SetPermissionService(a.permService)
 	newEngine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session))

@@ -596,6 +596,9 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	case model.ModelUpdate:
 		mi := a.state.Model
 		mi.Name = ev.Message
+		if ev.CtxMax > 0 {
+			mi.CtxMax = ev.CtxMax
+		}
 		a.state = a.state.WithModel(mi)
 
 	case model.IssueUserUpdate:

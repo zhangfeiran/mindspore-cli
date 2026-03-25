@@ -10,6 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const legacyGeneratedContextMaxTokens = 240000
+
 // LoadWithEnv loads configuration from file and applies environment variable overrides.
 func LoadWithEnv() (*Config, error) {
 	cfg := DefaultConfig()
@@ -19,9 +21,14 @@ func LoadWithEnv() (*Config, error) {
 	// Auto-generate user config on first run if it doesn't exist.
 	ensureUserConfig(cfg)
 
+	userPath := userConfigPath()
+
 	// Fixed config layers: defaults -> user -> project -> env.
-	if err := mergeConfigFile(cfg, userConfigPath()); err != nil {
+	if err := mergeConfigFile(cfg, userPath); err != nil {
 		return nil, err
+	}
+	if usesStaleLegacyUserContextWindow(userPath) {
+		cfg.Context.Window = defaultContextWindow
 	}
 
 	projectPath := filepath.Join(".ms-cli", "config.yaml")
@@ -31,7 +38,9 @@ func LoadWithEnv() (*Config, error) {
 
 	// defaults-by-model > ENV > project > user > default
 	applyModelTokenDefaults(cfg, defaultModelMaxTokens, defaultContextWindow)
+	previousModel := cfg.Model.Model
 	ApplyEnvOverrides(cfg)
+	RefreshModelTokenDefaults(cfg, previousModel)
 	cfg.normalize()
 
 	// Validate
@@ -193,6 +202,30 @@ func userConfigPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".ms-cli", "config.yaml")
+}
+
+func usesStaleLegacyUserContextWindow(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+
+	var raw struct {
+		Context struct {
+			Window          int `yaml:"window"`
+			LegacyMaxTokens int `yaml:"max_tokens"`
+		} `yaml:"context"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+
+	return raw.Context.Window == 0 && raw.Context.LegacyMaxTokens == legacyGeneratedContextMaxTokens
 }
 
 func mergeConfigFile(cfg *Config, path string) error {

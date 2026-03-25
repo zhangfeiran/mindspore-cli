@@ -145,7 +145,11 @@ func (a *Application) switchModel(providerName, modelName string) {
 		return
 	}
 
-	a.EventCh <- model.Event{Type: model.ModelUpdate, Message: a.Config.Model.Model}
+	a.EventCh <- model.Event{
+		Type:    model.ModelUpdate,
+		Message: a.Config.Model.Model,
+		CtxMax:  a.Config.Context.Window,
+	}
 
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,

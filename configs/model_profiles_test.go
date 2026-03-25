@@ -216,3 +216,38 @@ context:
 		t.Fatalf("context.window = %d, want %d", got, want)
 	}
 }
+
+func TestRefreshModelTokenDefaults_UpdatesAutoValuesOnModelSwitch(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Model.Model = "gpt-4o-mini"
+
+	previousModel := cfg.Model.Model
+
+	cfg.Model.Model = "gpt-5.4"
+	RefreshModelTokenDefaults(cfg, previousModel)
+
+	if got, want := cfg.Model.MaxTokens, 128000; got != want {
+		t.Fatalf("model.max_tokens = %d, want %d", got, want)
+	}
+	if got, want := cfg.Context.Window, 1050000; got != want {
+		t.Fatalf("context.window = %d, want %d", got, want)
+	}
+}
+
+func TestRefreshModelTokenDefaults_PreservesExplicitOverridesOnModelSwitch(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Model.Model = "gpt-5"
+	applyModelTokenDefaults(cfg, DefaultConfig().Model.MaxTokens, DefaultConfig().Context.Window)
+	cfg.Model.MaxTokens = 7777
+	cfg.Context.Window = 55555
+
+	cfg.Model.Model = "gpt-5.4"
+	RefreshModelTokenDefaults(cfg, "gpt-5")
+
+	if got, want := cfg.Model.MaxTokens, 7777; got != want {
+		t.Fatalf("model.max_tokens = %d, want %d", got, want)
+	}
+	if got, want := cfg.Context.Window, 55555; got != want {
+		t.Fatalf("context.window = %d, want %d", got, want)
+	}
+}

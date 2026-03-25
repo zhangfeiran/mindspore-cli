@@ -47,6 +47,20 @@ func TestCmdModel_PrefixedUpdatesProviderAndModel(t *testing.T) {
 	}
 }
 
+func TestCmdModel_ModelUpdateCarriesContextWindow(t *testing.T) {
+	app := newModelCommandTestApp()
+	app.Config.Context.Window = 200000
+
+	app.cmdModel([]string{"gpt-4o"})
+
+	drainUntilEventType(t, app, model.AgentThinking)
+	ev := drainUntilEventType(t, app, model.ModelUpdate)
+
+	if got, want := ev.CtxMax, 200000; got != want {
+		t.Fatalf("model update ctx max = %d, want %d", got, want)
+	}
+}
+
 func TestCmdModel_InvalidPrefixNoMutation(t *testing.T) {
 	app := newModelCommandTestApp()
 	app.Config.Model.Provider = "openai-compatible"

@@ -63,6 +63,40 @@ func applyModelTokenDefaults(cfg *Config, defaultModelMaxTokens, defaultContextW
 	}
 }
 
+// RefreshModelTokenDefaults reapplies auto token defaults after a model change.
+// Explicit config overrides are preserved; only values still on the default or
+// previous auto-profile values are updated.
+func RefreshModelTokenDefaults(cfg *Config, previousModel string) {
+	if cfg == nil {
+		return
+	}
+
+	defaults := DefaultConfig()
+	previousProfile, previousProfileMatched := matchModelTokenProfile(previousModel, cfg.ModelProfiles)
+	nextProfile, nextProfileMatched := matchModelTokenProfile(cfg.Model.Model, cfg.ModelProfiles)
+
+	if shouldRefreshAutoTokenValue(cfg.Model.MaxTokens, defaults.Model.MaxTokens, previousProfile.ModelMaxTokens, previousProfileMatched) {
+		cfg.Model.MaxTokens = defaults.Model.MaxTokens
+		if nextProfileMatched && nextProfile.ModelMaxTokens > 0 {
+			cfg.Model.MaxTokens = nextProfile.ModelMaxTokens
+		}
+	}
+
+	if shouldRefreshAutoTokenValue(cfg.Context.Window, defaults.Context.Window, previousProfile.ContextWindow, previousProfileMatched) {
+		cfg.Context.Window = defaults.Context.Window
+		if nextProfileMatched && nextProfile.ContextWindow > 0 {
+			cfg.Context.Window = nextProfile.ContextWindow
+		}
+	}
+}
+
+func shouldRefreshAutoTokenValue(currentValue, defaultValue, previousProfileValue int, previousProfileMatched bool) bool {
+	if currentValue == defaultValue {
+		return true
+	}
+	return previousProfileMatched && previousProfileValue > 0 && currentValue == previousProfileValue
+}
+
 func matchModelTokenProfile(modelName string, custom map[string]ModelTokenProfile) (ModelTokenProfile, bool) {
 	for _, candidate := range modelMatchCandidates(modelName) {
 		if profile, ok := matchByLongestPrefix(candidate, custom); ok {

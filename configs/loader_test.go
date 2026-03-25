@@ -211,6 +211,85 @@ func TestLoadWithEnv_IgnoresLegacyDotMscliPaths(t *testing.T) {
 	}
 }
 
+func TestLoadWithEnv_IgnoresStaleLegacyUserContextDefault(t *testing.T) {
+	clearEnv(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	projectDir := t.TempDir()
+	t.Chdir(projectDir)
+
+	userPath := filepath.Join(home, ".ms-cli", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0755); err != nil {
+		t.Fatalf("mkdir user config dir: %v", err)
+	}
+	if err := os.WriteFile(userPath, []byte(`context:
+  max_tokens: 240000
+`), 0600); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+
+	cfg, err := LoadWithEnv()
+	if err != nil {
+		t.Fatalf("LoadWithEnv() error = %v", err)
+	}
+
+	if got, want := cfg.Context.Window, 200000; got != want {
+		t.Fatalf("context.window = %d, want %d", got, want)
+	}
+}
+
+func TestLoadWithEnv_PreservesCustomLegacyUserContextWindow(t *testing.T) {
+	clearEnv(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	projectDir := t.TempDir()
+	t.Chdir(projectDir)
+
+	userPath := filepath.Join(home, ".ms-cli", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0755); err != nil {
+		t.Fatalf("mkdir user config dir: %v", err)
+	}
+	if err := os.WriteFile(userPath, []byte(`context:
+  max_tokens: 18000
+`), 0600); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+
+	cfg, err := LoadWithEnv()
+	if err != nil {
+		t.Fatalf("LoadWithEnv() error = %v", err)
+	}
+
+	if got, want := cfg.Context.Window, 18000; got != want {
+		t.Fatalf("context.window = %d, want %d", got, want)
+	}
+}
+
+func TestLoadWithEnv_AutoTokenLimitsForEnvModelOverride(t *testing.T) {
+	clearEnv(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	projectDir := t.TempDir()
+	t.Chdir(projectDir)
+
+	t.Setenv("MSCLI_MODEL", "gpt-5.4")
+
+	cfg, err := LoadWithEnv()
+	if err != nil {
+		t.Fatalf("LoadWithEnv() error = %v", err)
+	}
+
+	if got, want := cfg.Model.MaxTokens, 128000; got != want {
+		t.Fatalf("model.max_tokens = %d, want %d", got, want)
+	}
+	if got, want := cfg.Context.Window, 1050000; got != want {
+		t.Fatalf("context.window = %d, want %d", got, want)
+	}
+}
+
 func clearEnv(t *testing.T) {
 	t.Helper()
 

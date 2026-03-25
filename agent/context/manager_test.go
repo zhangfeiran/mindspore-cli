@@ -160,6 +160,32 @@ func TestTokenUsage(t *testing.T) {
 	}
 }
 
+func TestSetTokenLimits(t *testing.T) {
+	mgr := NewManager(DefaultManagerConfig())
+	mgr.SetSystemPrompt("system prompt")
+	if err := mgr.AddMessage(llm.NewUserMessage("hello world")); err != nil {
+		t.Fatalf("AddMessage failed: %v", err)
+	}
+
+	if err := mgr.SetTokenLimits(200000, 4000); err != nil {
+		t.Fatalf("SetTokenLimits failed: %v", err)
+	}
+
+	usage := mgr.TokenUsage()
+	if got, want := usage.Max, 200000; got != want {
+		t.Fatalf("usage.Max = %d, want %d", got, want)
+	}
+	if got, want := usage.Reserved, 4000; got != want {
+		t.Fatalf("usage.Reserved = %d, want %d", got, want)
+	}
+	if mgr.budget == nil {
+		t.Fatal("budget should be reinitialized")
+	}
+	if got, want := mgr.budget.GetStats().MaxTokens, 200000; got != want {
+		t.Fatalf("budget max tokens = %d, want %d", got, want)
+	}
+}
+
 func TestIsWithinBudget(t *testing.T) {
 	cfg := DefaultManagerConfig()
 	cfg.MaxTokens = 100
