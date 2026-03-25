@@ -11,8 +11,6 @@ import (
 func TestRemoteCommitUsesThreeSecondTimeout(t *testing.T) {
 	syncer := NewRepoSync(RepoSyncConfig{
 		HomeDir: t.TempDir(),
-		RepoURL: DefaultRepoURL,
-		Branch:  DefaultRepoBranch,
 	})
 	syncer.httpClient = &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

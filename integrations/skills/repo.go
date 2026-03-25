@@ -35,11 +35,9 @@ type RepoSync interface {
 	Sync() error
 }
 
-// RepoSyncConfig controls which skills repo/branch is synced locally.
+// RepoSyncConfig controls where the shared skills repo is synced locally.
 type RepoSyncConfig struct {
 	HomeDir string
-	RepoURL string
-	Branch  string
 }
 
 // DefaultRepoSync keeps the bundled skills repo fresh under ~/.ms-cli.
@@ -62,18 +60,10 @@ func NewDefaultRepoSync(homeDir string) *DefaultRepoSync {
 
 // NewRepoSync creates a startup syncer using the provided repo settings.
 func NewRepoSync(cfg RepoSyncConfig) *DefaultRepoSync {
-	repoURL := strings.TrimSpace(cfg.RepoURL)
-	if repoURL == "" {
-		repoURL = DefaultRepoURL
-	}
-	branch := strings.TrimSpace(cfg.Branch)
-	if branch == "" {
-		branch = DefaultRepoBranch
-	}
 	return &DefaultRepoSync{
 		homeDir:     strings.TrimSpace(cfg.HomeDir),
-		repoURL:     repoURL,
-		branch:      branch,
+		repoURL:     DefaultRepoURL,
+		branch:      DefaultRepoBranch,
 		skipInTests: true,
 		httpClient: &http.Client{
 			Timeout: defaultHTTPTimeout,
