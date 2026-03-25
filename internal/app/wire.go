@@ -57,9 +57,7 @@ type Application struct {
 	// Skills
 	skillLoader   *skills.Loader
 	skillsHomeDir string
-	startupOnce   sync.Once
-	startupMu     sync.Mutex
-	startupPrompt *pendingStartupPrompt
+	startupOnce sync.Once
 
 	// Bug tracking
 	bugService   *bugs.Service
@@ -143,22 +141,17 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 
 	toolRegistry := initTools(config, workDir)
 
-	// Skills: discover from legacy local dirs plus the synced repo path.
-	// Shared repo refresh is deferred until the UI is visible.
+	// Skills: all skills live under ~/.ms-cli/skills/.
+	// Shared repo skills are copied there after sync.
 	homeDir, _ := os.UserHomeDir()
 	execSkillsDir := ""
 	if ep, err := os.Executable(); err == nil {
 		execSkillsDir = filepath.Join(filepath.Dir(ep), ".ms-cli", "skills")
 	}
-	syncedSkillsDir := ""
-	if strings.TrimSpace(homeDir) != "" {
-		syncedSkillsDir = skills.SyncedSkillsDir(homeDir)
-	}
 	skillLoader := skills.NewLoader(
 		execSkillsDir,
 		filepath.Join(homeDir, ".ms-cli", "skills"),
 		filepath.Join(workDir, ".ms-cli", "skills"),
-		syncedSkillsDir,
 	)
 	toolRegistry.MustRegister(skillstool.NewLoadSkillTool(skillLoader))
 

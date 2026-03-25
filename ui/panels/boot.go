@@ -7,12 +7,6 @@ import (
 )
 
 var (
-	bootBoxStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")).
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("239")).
-			Padding(1, 3)
-
 	bootMessageBaseStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("241")).
 				Bold(true)
@@ -28,14 +22,11 @@ var (
 
 // RenderBootScreen renders a centered splash screen shown before the TUI opens.
 func RenderBootScreen(width, height, highlight int) string {
-	content := bootBoxStyle.Render(
-		renderBootShimmer("MindSpore AI Infra Agent", highlight),
-	)
-
 	if width <= 0 || height <= 0 {
-		return content
+		return ""
 	}
 
+	content := renderBootShimmer("MindSpore AI Infra Agent", highlight)
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, content)
 }
 

@@ -2,7 +2,6 @@ package skills
 
 import (
 	"archive/tar"
-	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -20,7 +19,7 @@ import (
 
 const (
 	DefaultRepoURL           = "https://github.com/vigo999/mindspore-skills"
-	DefaultRepoBranch        = "refactor-arch-3.0"
+	DefaultRepoBranch        = "refactor-arch-4.0"
 	defaultRepoName          = "mindspore-skills"
 	defaultSkillsDir         = "skills"
 	defaultCommitFile        = ".ms-cli-commit"
@@ -30,6 +29,13 @@ const (
 	defaultCommandLimit      = 2 * time.Minute
 )
 
+// UpdateInfo describes whether a skills repo update is available.
+type UpdateInfo struct {
+	Available     bool
+	LocalVersion  string
+	RemoteVersion string
+}
+
 // RepoSync manages skills repository sync.
 type RepoSync interface {
 	Sync() error
@@ -37,10 +43,8 @@ type RepoSync interface {
 
 // RepoSyncConfig controls where the shared skills repo is synced locally.
 type RepoSyncConfig struct {
-	HomeDir       string
-	PromptInput   io.Reader
-	LogWriter     io.Writer
-	ConfirmUpdate func(localCommit, remoteCommit string) (bool, error)
+	HomeDir   string
+	LogWriter io.Writer
 }
 
 // DefaultRepoSync keeps the bundled skills repo fresh under ~/.ms-cli.
@@ -52,9 +56,7 @@ type DefaultRepoSync struct {
 	httpClient  *http.Client
 	lookPath    func(file string) (string, error)
 	runCommand  func(name string, args ...string) (string, error)
-	promptInput io.Reader
 	logWriter   io.Writer
-	confirmFn   func(localCommit, remoteCommit string) (bool, error)
 }
 
 // NewDefaultRepoSync creates the default startup syncer for the shared skills repo.
@@ -64,10 +66,6 @@ func NewDefaultRepoSync(homeDir string) *DefaultRepoSync {
 
 // NewRepoSync creates a startup syncer using the provided repo settings.
 func NewRepoSync(cfg RepoSyncConfig) *DefaultRepoSync {
-	promptInput := cfg.PromptInput
-	if promptInput == nil {
-		promptInput = os.Stdin
-	}
 	logWriter := cfg.LogWriter
 	if logWriter == nil {
 		logWriter = os.Stderr
@@ -80,11 +78,9 @@ func NewRepoSync(cfg RepoSyncConfig) *DefaultRepoSync {
 		httpClient: &http.Client{
 			Timeout: defaultHTTPTimeout,
 		},
-		lookPath:    exec.LookPath,
-		runCommand:  defaultRunCommand,
-		promptInput: promptInput,
-		logWriter:   logWriter,
-		confirmFn:   cfg.ConfirmUpdate,
+		lookPath:   exec.LookPath,
+		runCommand: defaultRunCommand,
+		logWriter:  logWriter,
 	}
 }
 
@@ -103,7 +99,9 @@ func (s *DefaultRepoSync) SkillsDir() string {
 	return SyncedSkillsDir(s.homeDir)
 }
 
-// Sync keeps the shared skills repo available locally.
+// Sync handles first-time clone of the shared skills repo. If the repo already
+// exists locally it returns immediately — update checks are done separately via
+// CheckUpdate / ApplyUpdate.
 func (s *DefaultRepoSync) Sync() error {
 	if strings.TrimSpace(s.homeDir) == "" {
 		return fmt.Errorf("home directory is required")
@@ -127,82 +125,123 @@ func (s *DefaultRepoSync) Sync() error {
 		return fmt.Errorf("create skills parent dir: %w", err)
 	}
 
-	if !dirExists(repoDir) {
-		s.logf("local repo does not exist")
-		if hasGit {
-			s.logf("cloning %s@%s", s.repoURL, s.branch)
-			if err := s.cloneRepo(repoDir); err != nil {
-				return err
-			}
-			commit, err := s.localGitCommit(repoDir)
-			if err != nil {
-				return err
-			}
-			if err := s.writeCommitFile(repoDir, commit); err != nil {
-				return err
-			}
-			s.logf("clone complete at commit %s", shortCommit(commit))
-		} else {
-			s.logf("resolving remote commit before archive download")
-			remoteCommit, err := s.remoteCommit()
-			if err != nil {
-				return err
-			}
-			s.logf("remote commit: %s", shortCommit(remoteCommit))
-			s.logf("downloading and extracting archive")
-			if err := s.downloadArchive(repoDir); err != nil {
-				return err
-			}
-			if err := s.writeCommitFile(repoDir, remoteCommit); err != nil {
-				return err
-			}
-			s.logf("archive install complete at commit %s", shortCommit(remoteCommit))
-		}
-		return s.ensureSkillsDir(skillsDir)
+	// If the repo already exists, nothing to do — Sync only handles first-time clone.
+	if dirExists(repoDir) {
+		s.logf("local repo exists; skipping clone")
+		return nil
 	}
 
-	localCommit, err := s.localCommit(repoDir)
-	if err != nil {
-		s.logf("failed to resolve local commit: %v", err)
-	} else {
-		s.logf("local commit: %s", shortCommit(localCommit))
-	}
-
-	remoteCommit, err := s.remoteCommit()
-	if err != nil {
-		s.logf("failed to resolve remote commit: %v", err)
-		return s.ensureSkillsDir(skillsDir)
-	}
-	s.logf("remote commit: %s", shortCommit(remoteCommit))
-
-	if localCommit != "" && localCommit == remoteCommit {
-		s.logf("local repo is already up to date")
-		if err := s.writeCommitFile(repoDir, localCommit); err != nil {
+	s.logf("local repo does not exist")
+	if hasGit {
+		s.logf("cloning %s@%s", s.repoURL, s.branch)
+		if err := s.cloneRepo(repoDir); err != nil {
 			return err
 		}
-		return s.ensureSkillsDir(skillsDir)
-	}
-
-	if localCommit == "" {
-		s.logf("local commit is unknown; treating repo as outdated")
+		commit, err := s.localGitCommit(repoDir)
+		if err != nil {
+			return err
+		}
+		if err := s.writeCommitFile(repoDir, commit); err != nil {
+			return err
+		}
+		s.logf("clone complete at commit %s", ShortCommit(commit))
 	} else {
-		s.logf("update available: local %s != remote %s", shortCommit(localCommit), shortCommit(remoteCommit))
+		s.logf("resolving remote commit before archive download")
+		remoteCommit, err := s.remoteCommit()
+		if err != nil {
+			return err
+		}
+		s.logf("downloading and extracting archive")
+		if err := s.downloadArchive(repoDir); err != nil {
+			return err
+		}
+		if err := s.writeCommitFile(repoDir, remoteCommit); err != nil {
+			return err
+		}
+		s.logf("archive install complete at commit %s", ShortCommit(remoteCommit))
 	}
+	return s.ensureSkillsDir(skillsDir)
+}
 
-	if !s.canPrompt() {
-		s.logf("stdin is not interactive; skipping update prompt")
-		return s.ensureSkillsDir(skillsDir)
-	}
-
-	confirmed, err := s.confirmUpdate(localCommit, remoteCommit)
+// ReadVersion reads the VERSION file from the given repo directory.
+// Returns "unknown" if the file is missing or empty.
+func ReadVersion(repoDir string) string {
+	data, err := os.ReadFile(filepath.Join(repoDir, "VERSION"))
 	if err != nil {
-		return err
+		return "unknown"
 	}
-	if !confirmed {
-		s.logf("user declined update")
-		return s.ensureSkillsDir(skillsDir)
+	v := strings.TrimSpace(string(data))
+	if v == "" {
+		return "unknown"
+	}
+	return v
+}
+
+// CheckRemoteVersion fetches the VERSION file from the remote repo via GitHub raw content URL.
+func (s *DefaultRepoSync) CheckRemoteVersion() (string, error) {
+	repoPath, err := githubRepoPath(s.repoURL)
+	if err != nil {
+		return "", err
+	}
+	rawURL := "https://raw.githubusercontent.com/" + repoPath + "/" + url.PathEscape(s.branch) + "/VERSION"
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultRemoteHEADTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build remote version request: %w", err)
+	}
+	req.Header.Set("User-Agent", "ms-cli")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch remote version: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch remote version: unexpected status %d", resp.StatusCode)
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read remote version body: %w", err)
+	}
+	v := strings.TrimSpace(string(body))
+	if v == "" {
+		return "", fmt.Errorf("remote VERSION file is empty")
+	}
+	return v, nil
+}
+
+// CheckUpdate compares local and remote VERSION files to determine if an update is available.
+func (s *DefaultRepoSync) CheckUpdate() (*UpdateInfo, error) {
+	repoDir := SyncedRepoDir(s.homeDir)
+	localVersion := ReadVersion(repoDir)
+
+	remoteVersion, err := s.CheckRemoteVersion()
+	if err != nil {
+		return nil, err
+	}
+
+	return &UpdateInfo{
+		Available:     localVersion != remoteVersion,
+		LocalVersion:  localVersion,
+		RemoteVersion: remoteVersion,
+	}, nil
+}
+
+// ApplyUpdate performs the actual download/pull to bring the local repo up to date.
+func (s *DefaultRepoSync) ApplyUpdate() error {
+	repoDir := SyncedRepoDir(s.homeDir)
+	skillsDir := SyncedSkillsDir(s.homeDir)
+
+	if !dirExists(repoDir) {
+		return s.Sync()
+	}
+
+	hasGit := s.hasGit()
 	gitRepo := dirExists(filepath.Join(repoDir, ".git"))
 	switch {
 	case hasGit && gitRepo:
@@ -217,7 +256,7 @@ func (s *DefaultRepoSync) Sync() error {
 		if err := s.writeCommitFile(repoDir, newCommit); err != nil {
 			return err
 		}
-		s.logf("git update complete at commit %s", shortCommit(newCommit))
+		s.logf("git update complete at commit %s", ShortCommit(newCommit))
 	case hasGit:
 		s.logf("git is available but local copy has no .git metadata; replacing with a fresh clone")
 		if err := s.replaceWithGitClone(repoDir); err != nil {
@@ -230,8 +269,13 @@ func (s *DefaultRepoSync) Sync() error {
 		if err := s.writeCommitFile(repoDir, newCommit); err != nil {
 			return err
 		}
-		s.logf("clone replacement complete at commit %s", shortCommit(newCommit))
+		s.logf("clone replacement complete at commit %s", ShortCommit(newCommit))
 	default:
+		s.logf("resolving remote commit before archive download")
+		remoteCommit, err := s.remoteCommit()
+		if err != nil {
+			return err
+		}
 		s.logf("refreshing local copy from archive download")
 		if err := s.downloadArchive(repoDir); err != nil {
 			return err
@@ -239,7 +283,7 @@ func (s *DefaultRepoSync) Sync() error {
 		if err := s.writeCommitFile(repoDir, remoteCommit); err != nil {
 			return err
 		}
-		s.logf("archive refresh complete at commit %s", shortCommit(remoteCommit))
+		s.logf("archive refresh complete at commit %s", ShortCommit(remoteCommit))
 	}
 
 	return s.ensureSkillsDir(skillsDir)
@@ -461,60 +505,6 @@ func (s *DefaultRepoSync) ensureSkillsDir(skillsDir string) error {
 	return nil
 }
 
-func (s *DefaultRepoSync) canPrompt() bool {
-	if s.confirmFn != nil {
-		return true
-	}
-	if s.promptInput == nil || s.logWriter == nil {
-		return false
-	}
-	file, ok := s.promptInput.(*os.File)
-	if !ok {
-		return true
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
-}
-
-func (s *DefaultRepoSync) confirmUpdate(localCommit, remoteCommit string) (bool, error) {
-	if s.confirmFn != nil {
-		return s.confirmFn(localCommit, remoteCommit)
-	}
-	reader := bufio.NewReader(s.promptInput)
-	for {
-		fmt.Fprintf(
-			s.logWriter,
-			"%s: remote commit %s differs from local %s. Update now? [Y/n]: ",
-			defaultLogPrefix,
-			shortCommit(remoteCommit),
-			displayCommit(localCommit),
-		)
-
-		line, err := reader.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return false, fmt.Errorf("read update confirmation: %w", err)
-		}
-
-		answer := strings.ToLower(strings.TrimSpace(line))
-		switch answer {
-		case "", "y", "yes":
-			fmt.Fprintln(s.logWriter)
-			return true, nil
-		case "n", "no":
-			fmt.Fprintln(s.logWriter)
-			return false, nil
-		default:
-			fmt.Fprintln(s.logWriter)
-			s.logf("please answer Y or n")
-			if err == io.EOF {
-				return false, nil
-			}
-		}
-	}
-}
 
 func (s *DefaultRepoSync) logf(format string, args ...any) {
 	if s.logWriter == nil {
@@ -664,7 +654,7 @@ func runningUnderGoTest() bool {
 	return flag.Lookup("test.v") != nil || flag.Lookup("test.run") != nil
 }
 
-func shortCommit(commit string) string {
+func ShortCommit(commit string) string {
 	commit = strings.TrimSpace(commit)
 	if commit == "" {
 		return "unknown"
@@ -675,12 +665,6 @@ func shortCommit(commit string) string {
 	return commit[:12]
 }
 
-func displayCommit(commit string) string {
-	if strings.TrimSpace(commit) == "" {
-		return "unknown"
-	}
-	return shortCommit(commit)
-}
 
 func defaultRunCommand(name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultCommandLimit)

@@ -76,6 +76,7 @@ const (
 	MouseModeToggle   EventType = "MouseModeToggle"
 	IssueUserUpdate   EventType = "IssueUserUpdate"
 	ReleaseNoteUpdate EventType = "ReleaseNoteUpdate"
+	SkillsNoteUpdate  EventType = "SkillsNoteUpdate"
 	Done              EventType = "Done"
 )
 
@@ -121,6 +122,8 @@ type State struct {
 	MouseEnabled     bool      // whether mouse mode is enabled (for scrolling)
 	IssueUser        string    // logged-in bug server user
 	ReleaseNote      string    // release notes for current version
+	SkillsNote       string    // skills repo status for hint bar
+	HintNote         string    // currently visible hint note (rotated)
 }
 
 // NewState returns an initial empty state.
@@ -162,6 +165,8 @@ func (s State) WithTask(t TaskInfo) State {
 		MouseEnabled:     s.MouseEnabled,
 		IssueUser:        s.IssueUser,
 		ReleaseNote:      s.ReleaseNote,
+		SkillsNote:       s.SkillsNote,
+		HintNote:         s.HintNote,
 	}
 }
 
@@ -181,6 +186,8 @@ func (s State) WithMessage(m Message) State {
 		MouseEnabled:     s.MouseEnabled,
 		IssueUser:        s.IssueUser,
 		ReleaseNote:      s.ReleaseNote,
+		SkillsNote:       s.SkillsNote,
+		HintNote:         s.HintNote,
 	}
 }
 
@@ -200,6 +207,8 @@ func (s State) WithModel(m ModelInfo) State {
 		MouseEnabled:     s.MouseEnabled,
 		IssueUser:        s.IssueUser,
 		ReleaseNote:      s.ReleaseNote,
+		SkillsNote:       s.SkillsNote,
+		HintNote:         s.HintNote,
 	}
 }
 
@@ -219,6 +228,8 @@ func (s State) WithStats(stats TaskStats) State {
 		MouseEnabled:     s.MouseEnabled,
 		IssueUser:        s.IssueUser,
 		ReleaseNote:      s.ReleaseNote,
+		SkillsNote:       s.SkillsNote,
+		HintNote:         s.HintNote,
 	}
 }
 
@@ -238,6 +249,8 @@ func (s State) WithThinking(thinking bool) State {
 		MouseEnabled:     s.MouseEnabled,
 		IssueUser:        s.IssueUser,
 		ReleaseNote:      s.ReleaseNote,
+		SkillsNote:       s.SkillsNote,
+		HintNote:         s.HintNote,
 	}
 }
 
@@ -257,6 +270,8 @@ func (s State) ResetStats() State {
 		MouseEnabled:     s.MouseEnabled,
 		IssueUser:        s.IssueUser,
 		ReleaseNote:      s.ReleaseNote,
+		SkillsNote:       s.SkillsNote,
+		HintNote:         s.HintNote,
 	}
 }
 
@@ -276,6 +291,8 @@ func (s State) WithIssueUser(user string) State {
 		MouseEnabled:     s.MouseEnabled,
 		IssueUser:        user,
 		ReleaseNote:      s.ReleaseNote,
+		SkillsNote:       s.SkillsNote,
+		HintNote:         s.HintNote,
 	}
 }
 
@@ -295,5 +312,7 @@ func (s State) WithMouseEnabled(enabled bool) State {
 		MouseEnabled:     enabled,
 		IssueUser:        s.IssueUser,
 		ReleaseNote:      s.ReleaseNote,
+		SkillsNote:       s.SkillsNote,
+		HintNote:         s.HintNote,
 	}
 }

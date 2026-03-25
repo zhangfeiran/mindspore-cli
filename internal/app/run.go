@@ -90,10 +90,6 @@ func (a *Application) processInput(input string) {
 		return
 	}
 
-	if a.handleStartupControlInput(trimmed) {
-		return
-	}
-
 	if strings.HasPrefix(trimmed, "/") {
 		a.handleCommand(trimmed)
 		return

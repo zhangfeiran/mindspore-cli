@@ -193,6 +193,12 @@ func (r *Registry) registerDefaults() {
 	})
 
 	r.Register(Command{
+		Name:        "/skill-update",
+		Description: "Update shared skills repo",
+		Usage:       "/skill-update",
+	})
+
+	r.Register(Command{
 		Name:        "/login",
 		Description: "Log in to the bug server",
 		Usage:       "/login <token>",

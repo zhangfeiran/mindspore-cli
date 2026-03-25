@@ -52,9 +52,9 @@ func RenderHintBar(s model.State, width int) string {
 	}
 
 	right := ""
-	if s.ReleaseNote != "" {
+	if s.HintNote != "" {
 		noteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
-		right = noteStyle.Render(s.ReleaseNote)
+		right = noteStyle.Render(s.HintNote)
 	}
 
 	line := " " + left

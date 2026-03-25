@@ -153,14 +153,24 @@ func renderHighlightedCollapsedTool(m model.Message, width int) string {
 		body += " " + collapsedNameStyle.Render(content)
 	}
 	if summary := strings.TrimSpace(m.Summary); summary != "" {
-		body += " — " + collapsedSummaryStyle.Render(summary)
+		if strings.Contains(summary, "\n") {
+			lines := strings.Split(summary, "\n")
+			for i := range lines {
+				lines[i] = collapsedSummaryStyle.Render(strings.TrimSpace(lines[i]))
+			}
+			body += "\n" + strings.Join(lines, "\n")
+		} else {
+			body += " — " + collapsedSummaryStyle.Render(summary)
+		}
 	}
 	return renderPrefixedBlock(body, width, "  "+collapsedIconStyle.Render("▸")+" ", "    ")
 }
 
 func isHighlightedSkillTool(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
-	return strings.HasPrefix(name, "skill sync") || strings.HasPrefix(name, "skill ready")
+	return strings.HasPrefix(name, "skill sync") ||
+		strings.HasPrefix(name, "skill ready") ||
+		strings.HasPrefix(name, "mindspore-skills")
 }
 
 // --- Expanded: full output with header + body ---

@@ -1,12 +1,12 @@
 package app
 
 import (
-	"bytes"
 	"fmt"
 	"io"
-	"sort"
+	"os"
+	"path/filepath"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/vigo999/ms-cli/agent/loop"
 	"github.com/vigo999/ms-cli/integrations/skills"
@@ -14,46 +14,9 @@ import (
 	"github.com/vigo999/ms-cli/ui/slash"
 )
 
+const skillsNoteReadyDuration = 5 * time.Minute
+
 const bootReadyToken = "__boot_ready__"
-
-type pendingStartupPrompt struct {
-	decisionCh chan bool
-}
-
-type uiEventWriter struct {
-	emit func(string)
-
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (w *uiEventWriter) Write(p []byte) (int, error) {
-	if w == nil {
-		return len(p), nil
-	}
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if _, err := w.buf.Write(p); err != nil {
-		return 0, err
-	}
-
-	for {
-		data := w.buf.Bytes()
-		idx := bytes.IndexByte(data, '\n')
-		if idx < 0 {
-			break
-		}
-		line := strings.TrimSpace(string(data[:idx]))
-		w.buf.Next(idx + 1)
-		if line != "" && w.emit != nil {
-			w.emit(line)
-		}
-	}
-
-	return len(p), nil
-}
 
 func buildSystemPrompt(summaries []skills.SkillSummary) string {
 	systemPrompt := loop.DefaultSystemPrompt()
@@ -92,19 +55,43 @@ func (a *Application) syncSharedSkills() {
 		return
 	}
 
-	logger := &uiEventWriter{emit: a.emitStartupMessage}
 	repoSync := skills.NewRepoSync(skills.RepoSyncConfig{
-		HomeDir:       a.skillsHomeDir,
-		LogWriter:     logger,
-		ConfirmUpdate: a.confirmSkillsUpdate,
+		HomeDir:   a.skillsHomeDir,
+		LogWriter: io.Discard,
 	})
+
+	repoDir := skills.SyncedRepoDir(a.skillsHomeDir)
+	firstClone := !dirExistsCheck(repoDir)
 
 	if err := repoSync.Sync(); err != nil {
 		a.emitToolError("skills", "sync shared skills repo: %v", err)
 		return
 	}
 
+	if err := a.installRepoSkills(); err != nil {
+		a.emitToolError("skills", "install repo skills: %v", err)
+	}
+
 	a.refreshSkillCatalog()
+
+	if firstClone {
+		version := skills.ReadVersion(skills.SyncedRepoDir(a.skillsHomeDir))
+		a.emitSkillsNote(fmt.Sprintf("mindspore-skills %s loaded", fmtVersion(version)))
+		a.clearSkillsNoteAfter(skillsNoteReadyDuration)
+		return
+	}
+
+	info, err := repoSync.CheckUpdate()
+	if err != nil {
+		// Network error checking for updates is not fatal — skills are loaded.
+		return
+	}
+	if info.Available {
+		a.emitSkillsNote(fmt.Sprintf(
+			"mindspore-skills update: %s → %s (/skill-update)",
+			fmtVersion(info.LocalVersion), fmtVersion(info.RemoteVersion),
+		))
+	}
 }
 
 func (a *Application) refreshSkillCatalog() {
@@ -121,128 +108,124 @@ func (a *Application) refreshSkillCatalog() {
 	if err := a.persistSessionSnapshot(); err != nil {
 		a.emitToolError("session", "Failed to persist session snapshot: %v", err)
 	}
-
-	if a.EventCh == nil {
-		return
-	}
-
-	names := skillCatalogNames(summaries)
-	toolName := fmt.Sprintf("Skill ready: %d available", len(names))
-	summary := strings.Join(names, ", ")
-
-	a.EventCh <- model.Event{
-		Type:     model.ToolSkill,
-		ToolName: toolName,
-		Summary:  summary,
-	}
 }
 
-func (a *Application) emitStartupMessage(message string) {
-	if a == nil || a.EventCh == nil || strings.TrimSpace(message) == "" {
+func (a *Application) emitSkillsNote(note string) {
+	if a == nil || a.EventCh == nil || strings.TrimSpace(note) == "" {
 		return
 	}
 	a.EventCh <- model.Event{
-		Type:     model.ToolSkill,
-		ToolName: "Skill sync",
-		Summary:  normalizeStartupSummary(message),
+		Type:    model.SkillsNoteUpdate,
+		Message: note,
 	}
 }
 
-func (a *Application) confirmSkillsUpdate(localCommit, remoteCommit string) (bool, error) {
-	prompt := &pendingStartupPrompt{decisionCh: make(chan bool, 1)}
-
-	a.startupMu.Lock()
-	a.startupPrompt = prompt
-	a.startupMu.Unlock()
-
-	a.emitStartupMessage(fmt.Sprintf(
-		"update available: local %s -> remote %s. reply y or n.",
-		displayStartupCommit(localCommit),
-		displayStartupCommit(remoteCommit),
-	))
-
-	decision, ok := <-prompt.decisionCh
-	if !ok {
-		return false, io.EOF
+func (a *Application) clearSkillsNoteAfter(d time.Duration) {
+	if a == nil || a.EventCh == nil {
+		return
 	}
-	return decision, nil
+	go func() {
+		time.Sleep(d)
+		a.EventCh <- model.Event{
+			Type:    model.SkillsNoteUpdate,
+			Message: "",
+		}
+	}()
 }
 
-func (a *Application) handleStartupControlInput(input string) bool {
-	prompt := a.currentStartupPrompt()
-	if prompt == nil {
-		return false
+func (a *Application) cmdSkillUpdate() {
+	if a == nil || strings.TrimSpace(a.skillsHomeDir) == "" {
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: "Skills home directory not configured.",
+		}
+		return
 	}
 
-	switch strings.ToLower(strings.TrimSpace(input)) {
-	case "/exit":
-		return false
-	case "y", "yes", "是":
-		a.resolveStartupPrompt(prompt, true)
-		a.emitStartupMessage("skills sync: updating shared skills repo")
-		return true
-	case "n", "no", "否":
-		a.resolveStartupPrompt(prompt, false)
-		a.emitStartupMessage("skills sync: skipped update")
-		return true
-	default:
-		a.emitStartupMessage("skills sync: reply y or n to continue the shared skills update check")
-		return true
+	repoSync := skills.NewRepoSync(skills.RepoSyncConfig{
+		HomeDir:   a.skillsHomeDir,
+		LogWriter: io.Discard,
+	})
+
+	if err := repoSync.ApplyUpdate(); err != nil {
+		a.emitToolError("skills", "update shared skills repo: %v", err)
+		return
 	}
+
+	if err := a.installRepoSkills(); err != nil {
+		a.emitToolError("skills", "install repo skills: %v", err)
+	}
+
+	a.refreshSkillCatalog()
+
+	version := skills.ReadVersion(skills.SyncedRepoDir(a.skillsHomeDir))
+	a.emitSkillsNote(fmt.Sprintf("mindspore-skills %s loaded", fmtVersion(version)))
+	a.clearSkillsNoteAfter(skillsNoteReadyDuration)
 }
 
-func (a *Application) currentStartupPrompt() *pendingStartupPrompt {
-	if a == nil {
+// fmtVersion prefixes "v" only when the version is a real semver string.
+func fmtVersion(v string) string {
+	if v == "" || v == "unknown" {
+		return v
+	}
+	return "v" + v
+}
+
+// installRepoSkills copies skill directories from the synced repo into ~/.ms-cli/skills/.
+func (a *Application) installRepoSkills() error {
+	repoSkillsDir := skills.SyncedSkillsDir(a.skillsHomeDir)
+	if !dirExistsCheck(repoSkillsDir) {
 		return nil
 	}
-	a.startupMu.Lock()
-	defer a.startupMu.Unlock()
-	return a.startupPrompt
-}
 
-func (a *Application) resolveStartupPrompt(prompt *pendingStartupPrompt, decision bool) {
-	if a == nil || prompt == nil {
-		return
+	destDir := filepath.Join(a.skillsHomeDir, ".ms-cli", "skills")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("create skills dir: %w", err)
 	}
 
-	a.startupMu.Lock()
-	if a.startupPrompt == prompt {
-		a.startupPrompt = nil
+	entries, err := os.ReadDir(repoSkillsDir)
+	if err != nil {
+		return fmt.Errorf("read repo skills dir: %w", err)
 	}
-	a.startupMu.Unlock()
 
-	select {
-	case prompt.decisionCh <- decision:
-	default:
-	}
-	close(prompt.decisionCh)
-}
-
-func displayStartupCommit(commit string) string {
-	commit = strings.TrimSpace(commit)
-	if commit == "" {
-		return "unknown"
-	}
-	if len(commit) <= 7 {
-		return commit
-	}
-	return commit[:7]
-}
-
-func skillCatalogNames(summaries []skills.SkillSummary) []string {
-	names := make([]string, 0, len(summaries))
-	for _, s := range summaries {
-		name := strings.TrimSpace(s.Name)
-		if name != "" {
-			names = append(names, name)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		src := filepath.Join(repoSkillsDir, entry.Name())
+		dst := filepath.Join(destDir, entry.Name())
+		// Remove old copy and replace with fresh one.
+		_ = os.RemoveAll(dst)
+		if err := copyDir(src, dst); err != nil {
+			return fmt.Errorf("copy skill %s: %w", entry.Name(), err)
 		}
 	}
-	sort.Strings(names)
-	return names
+	return nil
 }
 
-func normalizeStartupSummary(message string) string {
-	message = strings.TrimSpace(message)
-	message = strings.TrimSpace(strings.TrimPrefix(message, "skills sync:"))
-	return message
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode())
+	})
+}
+
+// dirExistsCheck is a local helper to avoid importing skills.dirExists (unexported).
+func dirExistsCheck(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

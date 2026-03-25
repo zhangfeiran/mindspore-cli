@@ -3,7 +3,6 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/vigo999/ms-cli/integrations/skills"
@@ -50,13 +49,6 @@ func TestCmdSkillAddInputCopiesLocalSkillAndListsAvailableSkills(t *testing.T) {
 		t.Fatalf("summary = %q, want %q", got, want)
 	}
 
-	ready := drainUntilEventType(t, app, model.ToolSkill)
-	if got, want := ready.ToolName, "Skill ready: 1 available"; got != want {
-		t.Fatalf("tool name = %q, want %q", got, want)
-	}
-	if !strings.Contains(ready.Summary, "demo-skill") {
-		t.Fatalf("expected skill summary to include demo-skill, got %q", ready.Summary)
-	}
 }
 
 func TestCmdSkillAddInputWithoutArgsPrintsUsage(t *testing.T) {
@@ -123,13 +115,6 @@ func TestCmdSkillAddInputRecursivelyFindsNestedSkillMarkdownFiles(t *testing.T) 
 		t.Fatalf("summary = %q, want %q", got, want)
 	}
 
-	ready := drainUntilEventType(t, app, model.ToolSkill)
-	if got, want := ready.ToolName, "Skill ready: 2 available"; got != want {
-		t.Fatalf("tool name = %q, want %q", got, want)
-	}
-	if !strings.Contains(ready.Summary, "alpha") || !strings.Contains(ready.Summary, "beta") {
-		t.Fatalf("expected ready summary to include alpha and beta, got %q", ready.Summary)
-	}
 }
 
 func TestClassifySkillAddSource(t *testing.T) {
