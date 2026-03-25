@@ -2,7 +2,7 @@ package loop
 
 import (
 	"context"
-	"fmt"
+	"io"
 	"testing"
 
 	ctxmanager "github.com/vigo999/ms-cli/agent/context"
@@ -31,7 +31,19 @@ func (p *captureProvider) Complete(ctx context.Context, req *llm.CompletionReque
 }
 
 func (p *captureProvider) CompleteStream(ctx context.Context, req *llm.CompletionRequest) (llm.StreamIterator, error) {
-	return nil, fmt.Errorf("not implemented")
+	copied := *req
+	copied.Messages = append([]llm.Message(nil), req.Messages...)
+	copied.Tools = append([]llm.Tool(nil), req.Tools...)
+	p.lastReq = &copied
+
+	return &captureStreamIterator{
+		chunks: []llm.StreamChunk{
+			{
+				Content:      "ok",
+				FinishReason: llm.FinishStop,
+			},
+		},
+	}, nil
 }
 
 func (p *captureProvider) SupportsTools() bool {
@@ -132,4 +144,22 @@ func TestRunUsesSystemPromptAfterContextManagerSwap(t *testing.T) {
 	if second.Content != "say hello" {
 		t.Fatalf("expected second message content to be user task, got %q", second.Content)
 	}
+}
+
+type captureStreamIterator struct {
+	chunks []llm.StreamChunk
+	index  int
+}
+
+func (it *captureStreamIterator) Next() (*llm.StreamChunk, error) {
+	if it.index >= len(it.chunks) {
+		return nil, io.EOF
+	}
+	chunk := it.chunks[it.index]
+	it.index++
+	return &chunk, nil
+}
+
+func (it *captureStreamIterator) Close() error {
+	return nil
 }

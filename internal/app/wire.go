@@ -61,6 +61,11 @@ type Application struct {
 	// Project tracking
 	projectService *projectpkg.Service
 
+	// Foreground chat task state
+	taskRunID   uint64
+	taskCancels map[uint64]context.CancelFunc
+	taskMu      sync.Mutex
+
 	// Train mode state
 	trainMode       bool
 	trainPhase      string // "setup","ready","running","failed","analyzing","fixing","evaluating","drift_detected","completed","stopped"

@@ -12,7 +12,6 @@ import (
 
 	"github.com/vigo999/ms-cli/configs"
 	"github.com/vigo999/ms-cli/integrations/llm"
-	providerpkg "github.com/vigo999/ms-cli/integrations/llm/provider"
 )
 
 func TestInitProviderAnthropic(t *testing.T) {
@@ -131,6 +130,6 @@ func TestWireBootstrapKeyAndURLOverrideEnvDuringProviderInit(t *testing.T) {
 	}
 }
 
-func providerResolveNoOverrides() providerpkg.ResolveOptions {
-	return providerpkg.ResolveOptions{}
+func providerResolveNoOverrides() llm.ResolveOptions {
+	return llm.ResolveOptions{}
 }

@@ -25,6 +25,7 @@ const (
 	maxToolLines              = 120
 	maxToolRunes              = 12000
 	interruptQueuedTrainToken = "__interrupt_queued_train__"
+	interruptActiveTaskToken  = "__interrupt_active_task__"
 )
 
 var (
@@ -259,11 +260,18 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 		a.lastInterrupt = now
+		if a.userCh != nil {
+			select {
+			case a.userCh <- interruptActiveTaskToken:
+			default:
+			}
+		}
+		a.state = a.clearThinking()
 		a.input = a.input.Reset()
 		a.resizeActiveLayout()
 		a.state = a.state.WithMessage(model.Message{
 			Kind:    model.MsgAgent,
-			Content: "Interrupted. Press Ctrl+C again within 1 second to exit.",
+			Content: "Interrupt requested. Press Ctrl+C again within 1 second to exit.",
 		})
 		a.updateViewport()
 		return a, nil
@@ -475,9 +483,6 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 
 	case model.AgentThinking:
 		a.state = a.state.WithThinking(true)
-		if !a.hasThinkingMessage() {
-			a.state = a.state.WithMessage(model.Message{Kind: model.MsgThinking})
-		}
 
 	case model.AgentReply:
 		a.state = a.state.WithThinking(false)
@@ -497,7 +502,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	case model.ToolCallStart:
 		a.state = a.state.WithThinking(false)
 		a.state = a.commitStreamingAgent()
-		a.state = a.replaceThinking(a.pendingToolMessage(ev))
+		a.state = a.state.WithMessage(a.pendingToolMessage(ev))
 
 	case model.CmdStarted:
 		stats := a.state.Stats
@@ -568,6 +573,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		})
 
 	case model.ToolError:
+		a.state = a.clearThinking()
 		stats := a.state.Stats
 		stats.Errors++
 		a.state = a.state.WithStats(stats)
@@ -1485,30 +1491,13 @@ func compareRuns(tv model.TrainWorkspaceState) []model.TrainRunState {
 
 // ── Rendering ────────────────────────────────────────────────
 
-func (a App) replaceThinking(m model.Message) model.State {
-	msgs := make([]model.Message, 0, len(a.state.Messages))
-	for _, msg := range a.state.Messages {
-		if msg.Kind != model.MsgThinking {
-			msgs = append(msgs, msg)
-		}
-	}
-	msgs = append(msgs, m)
-	next := a.state
-	next.Messages = msgs
-	return next
-}
-
 func (a App) appendToStreamingAgent(delta string) model.State {
 	if delta == "" {
 		return a.state
 	}
 
-	msgs := make([]model.Message, 0, len(a.state.Messages))
-	for _, msg := range a.state.Messages {
-		if msg.Kind != model.MsgThinking {
-			msgs = append(msgs, msg)
-		}
-	}
+	msgs := make([]model.Message, len(a.state.Messages))
+	copy(msgs, a.state.Messages)
 
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Kind == model.MsgAgent && msgs[i].Streaming {
@@ -1530,12 +1519,8 @@ func (a App) appendToStreamingAgent(delta string) model.State {
 }
 
 func (a App) finalizeAgentMessage(content string) model.State {
-	msgs := make([]model.Message, 0, len(a.state.Messages))
-	for _, msg := range a.state.Messages {
-		if msg.Kind != model.MsgThinking {
-			msgs = append(msgs, msg)
-		}
-	}
+	msgs := make([]model.Message, len(a.state.Messages))
+	copy(msgs, a.state.Messages)
 
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Kind == model.MsgAgent && msgs[i].Streaming {
@@ -1547,7 +1532,9 @@ func (a App) finalizeAgentMessage(content string) model.State {
 		}
 	}
 
-	return a.replaceThinking(model.Message{Kind: model.MsgAgent, Content: content})
+	next := a.state
+	next.Messages = append(msgs, model.Message{Kind: model.MsgAgent, Content: content})
+	return next
 }
 
 func (a App) commitStreamingAgent() model.State {
@@ -1565,13 +1552,8 @@ func (a App) commitStreamingAgent() model.State {
 	return a.state
 }
 
-func (a App) hasThinkingMessage() bool {
-	for i := len(a.state.Messages) - 1; i >= 0; i-- {
-		if a.state.Messages[i].Kind == model.MsgThinking {
-			return true
-		}
-	}
-	return false
+func (a App) clearThinking() model.State {
+	return a.state.WithThinking(false)
 }
 
 func (a App) appendToLastTool(line string) model.State {

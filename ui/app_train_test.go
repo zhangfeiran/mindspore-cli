@@ -410,6 +410,65 @@ func TestEscInterruptTokenSentForQueuedTrain(t *testing.T) {
 	}
 }
 
+func TestCtrlCSendsInterruptTokenForActiveTask(t *testing.T) {
+	userCh := make(chan string, 1)
+	app := New(nil, userCh, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+	app.state = app.state.WithThinking(true)
+
+	next, _ := app.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	app = next.(App)
+
+	select {
+	case msg := <-userCh:
+		if msg != interruptActiveTaskToken {
+			t.Fatalf("expected ctrl+c to send interrupt token, got %q", msg)
+		}
+	default:
+		t.Fatal("expected ctrl+c to send interrupt token")
+	}
+
+	last := app.state.Messages[len(app.state.Messages)-1]
+	if !strings.Contains(last.Content, "Interrupt requested.") {
+		t.Fatalf("expected interrupt hint message, got %#v", last)
+	}
+	if app.state.IsThinking {
+		t.Fatal("expected ctrl+c to clear thinking state")
+	}
+	if view := app.View(); strings.Contains(view, "Thinking...") {
+		t.Fatalf("expected ctrl+c to remove thinking indicator, got:\n%s", view)
+	}
+}
+
+func TestToolErrorClearsThinkingIndicator(t *testing.T) {
+	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+
+	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	app = next.(App)
+
+	next, _ = app.handleEvent(model.Event{Type: model.AgentThinking})
+	app = next.(App)
+	if view := app.View(); !strings.Contains(view, "Thinking...") {
+		t.Fatalf("expected thinking indicator to render from state, got:\n%s", view)
+	}
+
+	next, _ = app.handleEvent(model.Event{
+		Type:     model.ToolError,
+		ToolName: "Engine",
+		Message:  "LLM error: boom",
+	})
+	app = next.(App)
+
+	if app.state.IsThinking {
+		t.Fatal("expected tool error to clear thinking state")
+	}
+	view := app.View()
+	if strings.Contains(view, "Thinking...") {
+		t.Fatalf("expected no stale thinking indicator after tool error, got:\n%s", view)
+	}
+}
+
 func TestBusyTrainQueuesInputInBannerInsteadOfChatStream(t *testing.T) {
 	userCh := make(chan string, 1)
 	app := New(nil, userCh, "test", ".", "", "demo-model", 4096)

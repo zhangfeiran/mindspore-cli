@@ -3,6 +3,7 @@ package loop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -164,7 +165,6 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 		ex.addEvent(NewEvent(EventAgentThinking, ""))
 
 		if err := ctx.Err(); err != nil {
-			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Context cancelled: %v", err)))
 			return ex.events, err
 		}
 
@@ -177,6 +177,9 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 
 		continueLoop, err := ex.handleResponse(ctx, resp)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return ex.events, err
+			}
 			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Handle response error: %v", err)))
 			return ex.events, err
 		}
@@ -215,6 +218,9 @@ func (ex *executor) callLLM(ctx context.Context) (*llm.CompletionResponse, error
 
 	resp, err := ex.streamCompletion(llmCtx, req)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(llmCtx.Err(), context.Canceled) {
+			return nil, context.Canceled
+		}
 		errMsg := fmt.Sprintf("LLM error: %v", err)
 		if ctx.Err() == context.DeadlineExceeded || llmCtx.Err() == context.DeadlineExceeded {
 			errMsg = fmt.Sprintf("Request timeout (ctx: %d tokens). Try /compact.",
@@ -378,6 +384,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	// Execute
 	result, err := tool.Execute(ctx, tc.Function.Arguments)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			return context.Canceled
+		}
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
 		if err := ex.addToolResultWithFallback(tc.ID, errMsg); err != nil {
@@ -387,6 +396,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	}
 
 	if result.Error != nil {
+		if errors.Is(result.Error, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			return context.Canceled
+		}
 		errMsg := result.Error.Error()
 		ex.addEvent(NewEvent(EventToolError, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg)))
 		if err := ex.addToolResultWithFallback(tc.ID, errMsg); err != nil {

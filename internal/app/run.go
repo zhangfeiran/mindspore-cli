@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 )
 
 const provideAPIKeyFirstMsg = "provide api key first"
+const interruptActiveTaskToken = "__interrupt_active_task__"
 
 // Run parses CLI args, wires dependencies, and starts the application.
 func Run(args []string) error {
@@ -84,6 +86,11 @@ func (a *Application) processInput(input string) {
 		return
 	}
 
+	if trimmed == interruptActiveTaskToken {
+		a.interruptActiveTasks()
+		return
+	}
+
 	if strings.HasPrefix(trimmed, "/") {
 		a.handleCommand(trimmed)
 		return
@@ -118,12 +125,19 @@ func (a *Application) runTask(description string) {
 		Description: description,
 	}
 
-	err := a.Engine.RunWithContextStream(context.Background(), task, func(ev loop.Event) {
+	ctx, runID := a.beginTaskRun()
+	defer a.finishTaskRun(runID)
+
+	err := a.Engine.RunWithContextStream(ctx, task, func(ev loop.Event) {
 		uiEvent := convertLoopEvent(ev)
 		if uiEvent != nil {
 			emit(*uiEvent)
 		}
 	})
+	if errors.Is(err, context.Canceled) {
+		persistSnapshot()
+		return
+	}
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline") {
@@ -138,6 +152,56 @@ func (a *Application) runTask(description string) {
 		return
 	}
 	persistSnapshot()
+}
+
+func (a *Application) beginTaskRun() (context.Context, uint64) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	a.taskMu.Lock()
+	defer a.taskMu.Unlock()
+
+	a.taskRunID++
+	runID := a.taskRunID
+	if a.taskCancels == nil {
+		a.taskCancels = map[uint64]context.CancelFunc{}
+	}
+	a.taskCancels[runID] = cancel
+	return ctx, runID
+}
+
+func (a *Application) finishTaskRun(runID uint64) {
+	a.taskMu.Lock()
+	defer a.taskMu.Unlock()
+
+	if len(a.taskCancels) == 0 {
+		return
+	}
+	delete(a.taskCancels, runID)
+	if len(a.taskCancels) == 0 {
+		a.taskCancels = nil
+	}
+}
+
+func (a *Application) interruptActiveTasks() bool {
+	a.taskMu.Lock()
+	if len(a.taskCancels) == 0 {
+		a.taskMu.Unlock()
+		return false
+	}
+
+	cancels := make([]context.CancelFunc, 0, len(a.taskCancels))
+	for _, cancel := range a.taskCancels {
+		if cancel != nil {
+			cancels = append(cancels, cancel)
+		}
+	}
+	a.taskCancels = nil
+	a.taskMu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+	return true
 }
 
 func (a *Application) replayHistory() {
