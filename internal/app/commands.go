@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/vigo999/ms-cli/integrations/llm"
-	"github.com/vigo999/ms-cli/integrations/skills"
 	"github.com/vigo999/ms-cli/permission"
 	"github.com/vigo999/ms-cli/ui/model"
 )
@@ -67,6 +66,8 @@ func (a *Application) handleCommand(input string) {
 		a.cmdDock()
 	case "/skill":
 		a.cmdSkill(parts[1:])
+	case "/skill-add":
+		a.cmdSkillAddInput(strings.TrimSpace(strings.TrimPrefix(input, "/skill-add")))
 	case "/help":
 		a.cmdHelp()
 	default:
@@ -312,13 +313,7 @@ func (a *Application) cmdSkill(args []string) {
 		return
 	}
 	if len(args) == 0 {
-		summaries := a.skillLoader.List()
-		if len(summaries) == 0 {
-			a.EventCh <- model.Event{Type: model.AgentReply, Message: "No skills available."}
-			return
-		}
-		msg := "Available skills:\n\n" + skills.FormatSummaries(summaries) + "\nUsage: /skill <name> [request...] (omit request to start the skill immediately)"
-		a.EventCh <- model.Event{Type: model.AgentReply, Message: msg}
+		a.emitAvailableSkills(true)
 		return
 	}
 
@@ -386,6 +381,7 @@ func (a *Application) cmdHelp() {
 	helpText := `Available commands:
 
   /skill [name] [request] Load and run a skill; omit request to start immediately
+  /skill-add <local-path>  Copy a local skill into ~/.ms-cli/skills
   /train <model> <method> Start train workflow (e.g. /train qwen3 lora)
   /train <action>         Control active train HUD (start, stop, analyze, apply fix, retry, view diff, exit)
   /project [status]        Show project status snapshot (server + git status)

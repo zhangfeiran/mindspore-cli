@@ -187,6 +187,12 @@ func (r *Registry) registerDefaults() {
 	})
 
 	r.Register(Command{
+		Name:        "/skill-add",
+		Description: "Copy a local skill into ~/.ms-cli/skills",
+		Usage:       "/skill-add <local-path>",
+	})
+
+	r.Register(Command{
 		Name:        "/login",
 		Description: "Log in to the bug server",
 		Usage:       "/login <token>",
