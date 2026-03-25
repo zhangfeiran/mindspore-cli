@@ -85,7 +85,7 @@ directly. The LLM plans inline within the agent loop.
 
 `internal/app.Wire(...)` now boots from whatever skills are already available
 locally, and the shared repo refresh for `~/.ms-cli/mindspore-skills` starts
-only after the main UI is visible. The refresh remains commit-aware: it stores
+as soon as the startup UI is visible. The refresh remains commit-aware: it stores
 the local commit id in the repo directory, compares the local commit with the
 remote branch head through a lightweight GitHub API check, uses the built-in
 shared repo URL and branch, and asks for `y/n` confirmation inside the UI when

@@ -145,6 +145,12 @@ func (a App) waitForEvent() tea.Msg {
 }
 
 func (a App) Init() tea.Cmd {
+	if a.userCh != nil {
+		select {
+		case a.userCh <- bootReadyToken:
+		default:
+		}
+	}
 	return tea.Batch(
 		a.thinking.Tick(),
 		tea.Tick(bootTickRate, func(time.Time) tea.Msg {
@@ -209,12 +215,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case bootDoneMsg:
 		a.bootActive = false
-		if a.userCh != nil {
-			select {
-			case a.userCh <- bootReadyToken:
-			default:
-			}
-		}
 		a.updateViewport()
 		return a, nil
 

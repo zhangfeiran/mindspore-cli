@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestRemoteCommitUsesThreeSecondTimeout(t *testing.T) {
+func TestRemoteCommitUsesFiveSecondTimeout(t *testing.T) {
 	syncer := NewRepoSync(RepoSyncConfig{
 		HomeDir: t.TempDir(),
 	})

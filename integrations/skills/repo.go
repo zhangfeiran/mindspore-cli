@@ -26,7 +26,7 @@ const (
 	defaultCommitFile        = ".ms-cli-commit"
 	defaultLogPrefix         = "skills sync"
 	defaultHTTPTimeout       = 2 * time.Minute
-	defaultRemoteHEADTimeout = 3 * time.Second
+	defaultRemoteHEADTimeout = 5 * time.Second
 	defaultCommandLimit      = 2 * time.Minute
 )
 

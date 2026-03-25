@@ -12,6 +12,8 @@ import (
 	"github.com/vigo999/ms-cli/ui/model"
 )
 
+const localSkillsDisplayDir = "~/.ms-cli/skills/"
+
 func (a *Application) cmdSkillAddInput(raw string) {
 	if a.skillLoader == nil {
 		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Skills not available."}
@@ -48,6 +50,7 @@ func (a *Application) cmdSkillAddInput(raw string) {
 
 	destDir := filepath.Join(destRoot, filepath.Base(sourceDir))
 	if !samePath(sourceDir, destDir) {
+		a.emitSkillAddLog(filepath.Base(sourceDir))
 		if err := copySkillDir(sourceDir, destDir); err != nil {
 			a.EventCh <- model.Event{
 				Type:     model.ToolError,
@@ -59,7 +62,21 @@ func (a *Application) cmdSkillAddInput(raw string) {
 	}
 
 	a.refreshSkillCatalog()
-	a.emitAvailableSkills(true)
+}
+
+func (a *Application) emitSkillAddLog(name string) {
+	if a == nil || a.EventCh == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "skill"
+	}
+	a.EventCh <- model.Event{
+		Type:     model.ToolSkill,
+		ToolName: "Skill add",
+		Summary:  fmt.Sprintf("adding %s to %s", name, localSkillsDisplayDir),
+	}
 }
 
 func (a *Application) emitAvailableSkills(includeUsage bool) {

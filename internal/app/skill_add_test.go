@@ -42,19 +42,19 @@ func TestCmdSkillAddInputCopiesLocalSkillAndListsAvailableSkills(t *testing.T) {
 		t.Fatalf("skillLoader.Load() error = %v", err)
 	}
 
+	adding := drainUntilEventType(t, app, model.ToolSkill)
+	if got, want := adding.ToolName, "Skill add"; got != want {
+		t.Fatalf("tool name = %q, want %q", got, want)
+	}
+	if got, want := adding.Summary, "adding demo-skill to ~/.ms-cli/skills/"; got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+
 	ready := drainUntilEventType(t, app, model.ToolSkill)
 	if got, want := ready.ToolName, "Skill ready: 1 available"; got != want {
 		t.Fatalf("tool name = %q, want %q", got, want)
 	}
 	if !strings.Contains(ready.Summary, "demo-skill") {
 		t.Fatalf("expected skill summary to include demo-skill, got %q", ready.Summary)
-	}
-
-	available := drainUntilEventType(t, app, model.AgentReply)
-	if !strings.Contains(available.Message, "Available skills:") {
-		t.Fatalf("expected available-skills message, got %q", available.Message)
-	}
-	if !strings.Contains(available.Message, "demo-skill") {
-		t.Fatalf("expected available-skills message to include demo-skill, got %q", available.Message)
 	}
 }
