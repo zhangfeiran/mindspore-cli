@@ -369,7 +369,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if !granted {
 		errMsg := fmt.Sprintf("Permission denied for tool: %s", toolName)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
-		if err := ex.addToolResult(tc.ID, errMsg); err != nil {
+		if err := ex.addToolResultWithFallback(tc.ID, errMsg); err != nil {
 			return err
 		}
 		return nil
@@ -380,7 +380,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if err != nil {
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
 		ex.addEvent(NewEvent(EventToolError, errMsg))
-		if err := ex.addToolResult(tc.ID, errMsg); err != nil {
+		if err := ex.addToolResultWithFallback(tc.ID, errMsg); err != nil {
 			return err
 		}
 		return nil
@@ -389,14 +389,14 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if result.Error != nil {
 		errMsg := result.Error.Error()
 		ex.addEvent(NewEvent(EventToolError, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg)))
-		if err := ex.addToolResult(tc.ID, errMsg); err != nil {
+		if err := ex.addToolResultWithFallback(tc.ID, errMsg); err != nil {
 			return err
 		}
 		return nil
 	}
 
 	ex.addToolEvent(toolName, result)
-	if err := ex.addToolResult(tc.ID, result.Content); err != nil {
+	if err := ex.addToolResultWithFallback(tc.ID, result.Content); err != nil {
 		return err
 	}
 	if toolName == "load_skill" && ex.engine.recorder != nil && ex.engine.recorder.RecordSkillActivate != nil {
@@ -463,6 +463,17 @@ func (ex *executor) addToolResult(callID, content string) error {
 		}
 		if err := ex.engine.recorder.RecordToolResult(toolCall, content); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (ex *executor) addToolResultWithFallback(callID, content string) error {
+	if err := ex.addToolResult(callID, content); err != nil {
+		fallback := fmt.Sprintf("tool result replaced due to context limit: %v", err)
+		ex.addEvent(NewEvent(EventToolError, fallback))
+		if fallbackErr := ex.addToolResult(callID, fallback); fallbackErr != nil {
+			return fmt.Errorf("persist tool result fallback: %w (original error: %v)", fallbackErr, err)
 		}
 	}
 	return nil
