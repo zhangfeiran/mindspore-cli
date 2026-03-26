@@ -80,6 +80,7 @@ const (
 	MouseModeToggle  EventType = "MouseModeToggle"
 	IssueUserUpdate  EventType = "IssueUserUpdate"
 	SkillsNoteUpdate EventType = "SkillsNoteUpdate"
+	TaskDone         EventType = "TaskDone"
 	Done             EventType = "Done"
 )
 

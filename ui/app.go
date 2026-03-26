@@ -812,6 +812,9 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	case model.BugDetailOpen:
 		a.openBugDetail(ev.BugView)
 
+	case model.TaskDone:
+		a.state = a.state.WithThinking(false)
+
 	case model.AgentThinking:
 		a.state = a.state.WithThinking(true)
 
