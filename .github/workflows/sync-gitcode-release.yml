@@ -184,9 +184,14 @@ jobs:
           auth_q="access_token=${GITCODE_TOKEN}"
 
           echo "Resolving GitCode release upload URL for tag ${GH_TAG}..."
-          curl -sS --fail \
-            "${api}/releases/${GH_TAG}/upload_url?${auth_q}" \
-            > upload-url.json
+          upload_http_code="$(curl -sS -o upload-url.json -w "%{http_code}" \
+            -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
+            "${api}/releases/${GH_TAG}/upload_url")"
+          if [ "${upload_http_code}" != "200" ]; then
+            echo "Unexpected GitCode upload_url response: ${upload_http_code}"
+            cat upload-url.json || true
+            exit 1
+          fi
 
           upload_url="$(jq -r '.upload_url // .url // .data.upload_url // .data.url // empty' upload-url.json)"
           if [ -z "${upload_url}" ]; then
