@@ -10,6 +10,17 @@ AI Infra Agent
 curl -fsSL https://raw.githubusercontent.com/vigo999/ms-cli/main/scripts/install.sh | bash
 ```
 
+Optional overrides:
+
+```bash
+# Force one source instead of auto-probing.
+MSCLI_INSTALL_SOURCE=github curl -fsSL https://raw.githubusercontent.com/vigo999/ms-cli/main/scripts/install.sh | bash
+MSCLI_INSTALL_SOURCE=mirror curl -fsSL https://raw.githubusercontent.com/vigo999/ms-cli/main/scripts/install.sh | bash
+
+# Override the mirror base URL if you host your own Caddy/Nginx mirror.
+MSCLI_MIRROR_BASE_URL=http://13.229.44.116/ms-cli/releases curl -fsSL https://raw.githubusercontent.com/vigo999/ms-cli/main/scripts/install.sh | bash
+```
+
 ### Build from source
 
 Requires Go 1.24.2+.

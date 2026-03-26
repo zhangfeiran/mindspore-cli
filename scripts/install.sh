@@ -2,7 +2,7 @@
 set -euo pipefail
 
 GITHUB_REPO="${MSCLI_GITHUB_REPO:-vigo999/ms-cli}"
-GITCODE_REPO="${MSCLI_GITCODE_REPO:-zwiori/ms-cli}"
+MIRROR_BASE_URL="${MSCLI_MIRROR_BASE_URL:-http://13.229.44.116/ms-cli/releases}"
 INSTALL_DIR="$HOME/.ms-cli/bin"
 BINARY_NAME="mscli"
 INSTALL_SOURCE="${MSCLI_INSTALL_SOURCE:-auto}"
@@ -10,7 +10,6 @@ PROBE_BYTES="${MSCLI_INSTALL_PROBE_BYTES:-262144}"
 PROBE_TIMEOUT="${MSCLI_INSTALL_PROBE_TIMEOUT:-8}"
 CONNECT_TIMEOUT="${MSCLI_INSTALL_CONNECT_TIMEOUT:-5}"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-GITCODE_RELEASE_BY_TAG_API_PREFIX="https://api.gitcode.com/api/v5/repos/${GITCODE_REPO}/releases/tags"
 
 # Detect OS.
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -138,8 +137,8 @@ pick_source() {
       github)
         url="$GITHUB_URL"
         ;;
-      gitcode)
-        url="$GITCODE_URL"
+      mirror)
+        url="$MIRROR_URL"
         ;;
       *)
         continue
@@ -183,16 +182,11 @@ echo "Latest release: ${LATEST}"
 
 ASSET="ms-cli-${OS}-${ARCH}"
 GITHUB_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST}/${ASSET}"
-GITCODE_URL=""
-
-echo "Resolving GitCode asset for tag ${LATEST}..."
-if gitcode_json="$(fetch_json "${GITCODE_RELEASE_BY_TAG_API_PREFIX}/${LATEST}" 2>/dev/null || true)"; then
-  GITCODE_URL="$(printf '%s' "$gitcode_json" | json_asset_url "$ASSET" || true)"
-fi
+MIRROR_URL="${MIRROR_BASE_URL%/}/${LATEST}/${ASSET}"
 
 case "$INSTALL_SOURCE" in
   auto)
-    if ! selection="$(pick_source github gitcode)"; then
+    if ! selection="$(pick_source github mirror)"; then
       echo "Error: could not reach any release download source" >&2
       exit 1
     fi
@@ -203,14 +197,14 @@ case "$INSTALL_SOURCE" in
       exit 1
     fi
     ;;
-  gitcode)
-    if ! selection="$(pick_source gitcode)"; then
-      echo "Error: GitCode release download is unavailable for tag ${LATEST}" >&2
+  mirror)
+    if ! selection="$(pick_source mirror)"; then
+      echo "Error: mirror release download is unavailable for tag ${LATEST}" >&2
       exit 1
     fi
     ;;
   *)
-    echo "Error: unsupported MSCLI_INSTALL_SOURCE=${INSTALL_SOURCE} (expected auto|github|gitcode)" >&2
+    echo "Error: unsupported MSCLI_INSTALL_SOURCE=${INSTALL_SOURCE} (expected auto|github|mirror)" >&2
     exit 1
     ;;
 esac

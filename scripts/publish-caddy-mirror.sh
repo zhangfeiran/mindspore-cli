@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="${1:-}"
+
+if [ -z "${VERSION}" ]; then
+  echo "Usage: ./scripts/publish-caddy-mirror.sh <version>"
+  echo "Example: MSCLI_MIRROR_HOST=ecs.example.com MSCLI_MIRROR_BASE_URL=https://download.example.com/ms-cli/releases ./scripts/publish-caddy-mirror.sh v0.4.25"
+  exit 1
+fi
+
+if [[ "${VERSION}" != v* ]]; then
+  echo "Error: version must include a leading v, for example v0.4.25" >&2
+  exit 1
+fi
+
+need_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Error: required command not found: $1" >&2
+    exit 1
+  fi
+}
+
+need_cmd ssh
+need_cmd scp
+need_cmd mktemp
+need_cmd python3
+
+MIRROR_HOST="${MSCLI_MIRROR_HOST:-}"
+MIRROR_USER="${MSCLI_MIRROR_USER:-root}"
+MIRROR_PORT="${MSCLI_MIRROR_PORT:-22}"
+DIST_DIR="${MSCLI_DIST_DIR:-dist}"
+MIRROR_ROOT="${MSCLI_MIRROR_ROOT:-/opt/downloads/ms-cli/releases}"
+MIRROR_BASE_URL="${MSCLI_MIRROR_BASE_URL:-}"
+REMOTE_CHMOD="${MSCLI_REMOTE_CHMOD:-a+rX}"
+REMOTE_LATEST_LINK="${MSCLI_REMOTE_LATEST_LINK:-1}"
+
+if [ -z "${MIRROR_HOST}" ]; then
+  echo "Error: MSCLI_MIRROR_HOST is required" >&2
+  exit 1
+fi
+
+if [ ! -d "${DIST_DIR}" ]; then
+  echo "Error: dist directory not found: ${DIST_DIR}" >&2
+  echo "Build first with ./scripts/release.sh ${VERSION} or create the binaries under ${DIST_DIR}" >&2
+  exit 1
+fi
+
+required_files=(
+  "manifest.json"
+  "ms-cli-linux-amd64"
+  "ms-cli-linux-arm64"
+  "ms-cli-darwin-amd64"
+  "ms-cli-darwin-arm64"
+  "ms-cli-windows-amd64.exe"
+)
+
+for file in "${required_files[@]}"; do
+  if [ ! -f "${DIST_DIR}/${file}" ]; then
+    echo "Error: missing required asset: ${DIST_DIR}/${file}" >&2
+    exit 1
+  fi
+done
+
+remote_target="${MIRROR_ROOT}/${VERSION}"
+remote_latest="${MIRROR_ROOT}/latest"
+ssh_target="${MIRROR_USER}@${MIRROR_HOST}"
+tmp_manifest=""
+
+cleanup() {
+  if [ -n "${tmp_manifest}" ] && [ -f "${tmp_manifest}" ]; then
+    rm -f "${tmp_manifest}"
+  fi
+}
+trap cleanup EXIT
+
+manifest_source="${DIST_DIR}/manifest.json"
+manifest_to_upload="${manifest_source}"
+
+if [ -n "${MIRROR_BASE_URL}" ]; then
+  tmp_manifest="$(mktemp)"
+  python3 - "${manifest_source}" "${tmp_manifest}" "${MIRROR_BASE_URL}" <<'PY'
+import json
+import pathlib
+import sys
+
+src = pathlib.Path(sys.argv[1])
+dst = pathlib.Path(sys.argv[2])
+base = sys.argv[3]
+
+data = json.loads(src.read_text(encoding="utf-8"))
+data["download_base"] = base.rstrip("/")
+dst.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+  manifest_to_upload="${tmp_manifest}"
+fi
+
+echo "Publishing ${VERSION} to ${ssh_target}:${remote_target}"
+ssh -p "${MIRROR_PORT}" "${ssh_target}" "mkdir -p '${remote_target}'"
+
+for file in "${required_files[@]}"; do
+  local_path="${DIST_DIR}/${file}"
+  if [ "${file}" = "manifest.json" ]; then
+    local_path="${manifest_to_upload}"
+  fi
+  echo "  -> ${file}"
+  scp -P "${MIRROR_PORT}" "${local_path}" "${ssh_target}:${remote_target}/${file}"
+done
+
+ssh -p "${MIRROR_PORT}" "${ssh_target}" "chmod -R ${REMOTE_CHMOD} '${remote_target}'"
+
+if [ "${REMOTE_LATEST_LINK}" = "1" ]; then
+  ssh -p "${MIRROR_PORT}" "${ssh_target}" "ln -sfn '${remote_target}' '${remote_latest}' && chmod -h ${REMOTE_CHMOD%% *} '${remote_latest}' 2>/dev/null || true"
+fi
+
+echo ""
+echo "Mirror upload complete."
+echo "Remote path: ${remote_target}"
+if [ -n "${MIRROR_BASE_URL}" ]; then
+  echo "Download base: ${MIRROR_BASE_URL%/}/${VERSION}"
+  echo "Manifest download_base set to: ${MIRROR_BASE_URL%/}"
+fi
