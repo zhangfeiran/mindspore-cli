@@ -23,6 +23,11 @@ const interruptActiveTaskToken = "__interrupt_active_task__"
 
 // Run parses CLI args, wires dependencies, and starts the application.
 func Run(args []string) error {
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "-v") {
+		fmt.Println(version.Version)
+		return nil
+	}
+
 	cfg, err := parseBootstrapConfig(args)
 	if err != nil {
 		return err
