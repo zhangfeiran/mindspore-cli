@@ -55,6 +55,14 @@ func (t *GrepTool) Schema() llm.ToolSchema {
 				Type:        "boolean",
 				Description: "Whether the search is case sensitive (default: true)",
 			},
+			"offset": {
+				Type:        "integer",
+				Description: "Match number to start returning from (1-indexed, 0 means from start)",
+			},
+			"limit": {
+				Type:        "integer",
+				Description: "Maximum number of matches to return (0 means no limit)",
+			},
 		},
 		Required: []string{"pattern"},
 	}
@@ -65,6 +73,8 @@ type grepParams struct {
 	Path          string `json:"path"`
 	Include       string `json:"include"`
 	CaseSensitive bool   `json:"case_sensitive"`
+	Offset        int    `json:"offset"`
+	Limit         int    `json:"limit"`
 }
 
 // Match represents a single grep match.
@@ -117,6 +127,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	if len(matches) == 0 {
 		return tools.StringResultWithSummary("No matches found", "0 matches"), nil
 	}
+	matches = sliceWithOffsetLimit(matches, p.Offset, p.Limit)
 
 	var lines []string
 	for _, m := range matches {
@@ -126,6 +137,9 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 
 	result := strings.Join(lines, "\n")
 	summary := fmt.Sprintf("%d matches", len(matches))
+	if p.Offset > 0 || p.Limit > 0 {
+		summary = fmt.Sprintf("%d matches (offset=%d, limit=%d)", len(matches), p.Offset, p.Limit)
+	}
 
 	return tools.StringResultWithSummary(result, summary), nil
 }

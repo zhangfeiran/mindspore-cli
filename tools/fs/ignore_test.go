@@ -70,6 +70,68 @@ func TestGrepToolIgnoresGitPaths(t *testing.T) {
 	}
 }
 
+func TestGlobToolSupportsOffsetAndLimit(t *testing.T) {
+	workDir := t.TempDir()
+	mustWriteTestFile(t, filepath.Join(workDir, "a.txt"), "a")
+	mustWriteTestFile(t, filepath.Join(workDir, "b.txt"), "b")
+	mustWriteTestFile(t, filepath.Join(workDir, "nested", "c.txt"), "c")
+
+	params, err := json.Marshal(map[string]any{
+		"pattern": "**",
+		"path":    ".",
+		"offset":  2,
+		"limit":   1,
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+
+	result, err := NewGlobTool(workDir).Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute result error = %v, want nil", result.Error)
+	}
+	if got, want := result.Content, "b.txt"; got != want {
+		t.Fatalf("glob content = %q, want %q", got, want)
+	}
+	if got, want := result.Summary, "1 files (offset=2, limit=1)"; got != want {
+		t.Fatalf("glob summary = %q, want %q", got, want)
+	}
+}
+
+func TestGrepToolSupportsOffsetAndLimit(t *testing.T) {
+	workDir := t.TempDir()
+	mustWriteTestFile(t, filepath.Join(workDir, "a.txt"), "needle one\nneedle two\n")
+	mustWriteTestFile(t, filepath.Join(workDir, "b.txt"), "needle three\n")
+
+	params, err := json.Marshal(map[string]any{
+		"pattern":        "needle",
+		"path":           ".",
+		"case_sensitive": true,
+		"offset":         2,
+		"limit":          1,
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+
+	result, err := NewGrepTool(workDir).Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute result error = %v, want nil", result.Error)
+	}
+	if got, want := result.Content, "a.txt:2:needle two"; got != want {
+		t.Fatalf("grep content = %q, want %q", got, want)
+	}
+	if got, want := result.Summary, "1 matches (offset=2, limit=1)"; got != want {
+		t.Fatalf("grep summary = %q, want %q", got, want)
+	}
+}
+
 func mustWriteTestFile(t *testing.T, path, content string) {
 	t.Helper()
 

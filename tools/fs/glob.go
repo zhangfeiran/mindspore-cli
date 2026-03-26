@@ -47,6 +47,14 @@ func (t *GlobTool) Schema() llm.ToolSchema {
 				Type:        "string",
 				Description: "Base directory to search from (default: current directory)",
 			},
+			"offset": {
+				Type:        "integer",
+				Description: "File number to start returning from (1-indexed, 0 means from start)",
+			},
+			"limit": {
+				Type:        "integer",
+				Description: "Maximum number of files to return (0 means no limit)",
+			},
 		},
 		Required: []string{"pattern"},
 	}
@@ -55,6 +63,8 @@ func (t *GlobTool) Schema() llm.ToolSchema {
 type globParams struct {
 	Pattern string `json:"pattern"`
 	Path    string `json:"path"`
+	Offset  int    `json:"offset"`
+	Limit   int    `json:"limit"`
 }
 
 // Execute executes the glob tool.
@@ -116,9 +126,13 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	if len(matches) == 0 {
 		return tools.StringResultWithSummary("No files found", "0 files"), nil
 	}
+	matches = sliceWithOffsetLimit(matches, p.Offset, p.Limit)
 
 	result := strings.Join(matches, "\n")
 	summary := fmt.Sprintf("%d files", len(matches))
+	if p.Offset > 0 || p.Limit > 0 {
+		summary = fmt.Sprintf("%d files (offset=%d, limit=%d)", len(matches), p.Offset, p.Limit)
+	}
 
 	return tools.StringResultWithSummary(result, summary), nil
 }

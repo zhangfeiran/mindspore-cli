@@ -35,7 +35,9 @@ var builtinModelTokenProfiles = map[string]ModelTokenProfile{
 
 	// Moonshot Kimi family.
 	"kimi-k2.5": {MaxTokens: 32768, ContextWindow: 256000},
+	"kimi-2.5": {MaxTokens: 32768, ContextWindow: 256000},
 	"kimi-k2":   {MaxTokens: 32000, ContextWindow: 128000},
+	"kimi-2":   {MaxTokens: 32000, ContextWindow: 128000},
 
 	// MiniMax family.
 	"minimax-m2.7": {MaxTokens: 204800, ContextWindow: 204800},
