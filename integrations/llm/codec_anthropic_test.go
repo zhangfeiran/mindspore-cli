@@ -260,6 +260,75 @@ func TestAnthropicStreamIteratorAccumulatesSingleToolUseJSONDelta(t *testing.T) 
 	}
 }
 
+func TestAnthropicStreamIteratorFallsBackToStartInputWhenPartialJSONInvalid(t *testing.T) {
+	stream := strings.Join([]string{
+		mustAnthropicSSEEvent(t, "message_start", anthropicStreamMessageStartEvent{
+			Message: struct {
+				ID    string         `json:"id"`
+				Model string         `json:"model"`
+				Usage anthropicUsage `json:"usage"`
+			}{
+				ID:    "msg_456",
+				Model: "claude-test",
+				Usage: anthropicUsage{InputTokens: 9},
+			},
+		}),
+		mustAnthropicSSEEvent(t, "content_block_start", anthropicStreamContentBlockStartEvent{
+			Index: 2,
+			ContentBlock: anthropicContentBlock{
+				Type:  "tool_use",
+				ID:    "toolu_456",
+				Name:  "read_file",
+				Input: json.RawMessage(`{"path":"docs/arch.md"}`),
+			},
+		}),
+		mustAnthropicSSEEvent(t, "content_block_delta", anthropicStreamContentBlockDeltaEvent{
+			Index: 2,
+			Delta: struct {
+				Type        string `json:"type"`
+				Text        string `json:"text,omitempty"`
+				PartialJSON string `json:"partial_json,omitempty"`
+			}{
+				Type:        "input_json_delta",
+				PartialJSON: `{"path":"docs/arch.md"`,
+			},
+		}),
+		mustAnthropicSSEEvent(t, "content_block_stop", anthropicStreamContentBlockStopEvent{
+			Index: 2,
+		}),
+		mustAnthropicSSEEvent(t, "message_delta", anthropicStreamMessageDeltaEvent{
+			Delta: struct {
+				StopReason string `json:"stop_reason"`
+			}{
+				StopReason: "tool_use",
+			},
+			Usage: anthropicUsage{OutputTokens: 2},
+		}),
+		"event: message_stop\n\n",
+	}, "")
+
+	it := newAnthropicCodec("").newStreamIterator(io.NopCloser(strings.NewReader(stream)))
+	t.Cleanup(func() {
+		if err := it.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	})
+
+	firstChunk, err := it.Next()
+	if err != nil {
+		t.Fatalf("first Next() error = %v", err)
+	}
+	if firstChunk == nil {
+		t.Fatal("first chunk = nil, want tool call chunk")
+	}
+	if got, want := len(firstChunk.ToolCalls), 1; got != want {
+		t.Fatalf("len(firstChunk.ToolCalls) = %d, want %d", got, want)
+	}
+	if got, want := string(firstChunk.ToolCalls[0].Function.Arguments), `{"path":"docs/arch.md"}`; got != want {
+		t.Fatalf("firstChunk.ToolCalls[0].Function.Arguments = %s, want %s", got, want)
+	}
+}
+
 func runAnthropicStreamAndAssertNoPanic(t *testing.T, stream string) (*StreamChunk, *StreamChunk) {
 	t.Helper()
 

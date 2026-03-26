@@ -464,11 +464,13 @@ func (it *anthropicStreamIterator) finishContentBlock(index int) (*StreamChunk, 
 	}
 	delete(it.toolBlocks, index)
 
-	arguments := state.Input
+	arguments := normalizeRawJSON(state.Input)
 	if partial := state.Partial.String(); partial != "" {
-		arguments = json.RawMessage(partial)
+		partialArgs := normalizeRawJSON(json.RawMessage(partial))
+		if json.Valid(partialArgs) {
+			arguments = partialArgs
+		}
 	}
-	arguments = normalizeRawJSON(arguments)
 	if !json.Valid(arguments) {
 		return nil, fmt.Errorf("decode tool_use input for block %d: invalid json", index)
 	}
