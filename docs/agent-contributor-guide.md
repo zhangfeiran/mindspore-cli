@@ -55,7 +55,7 @@ ms-cli/
   internal/project/        roadmap and weekly helpers
   internal/train/          training types and target abstraction
   agent/
-    context/               token budget and context compaction
+    context/               context window management and compaction
     loop/                  ReAct execution loop
     memory/                memory store, retrieval, policy
     session/               session state and persistence

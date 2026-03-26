@@ -45,7 +45,14 @@ Under `model`:
 - `url`: provider base URL
 - `key`: generic key fallback
 - `headers`: optional custom headers
-- existing model options remain (`model`, `temperature`, `max_tokens`, `timeout_sec`)
+- existing model options remain (`model`, `timeout_sec`)
+
+Request-shaping overrides are env-only:
+
+- `MSCLI_TEMPERATURE`
+- `MSCLI_MAX_TOKENS`
+
+When those env vars are unset, the provider request omits the corresponding fields, except the Anthropic Messages path, which falls back to `max_tokens=64000`.
 
 Default in config:
 

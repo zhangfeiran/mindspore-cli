@@ -176,8 +176,8 @@ type openAIToolCallFunction struct {
 type openAIChatCompletionRequest struct {
 	Model       string          `json:"model"`
 	Messages    []openAIMessage `json:"messages"`
-	Temperature float32         `json:"temperature"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
+	Temperature *float32        `json:"temperature,omitempty"`
+	MaxTokens   *int            `json:"max_tokens,omitempty"`
 	TopP        float32         `json:"top_p,omitempty"`
 	Stop        []string        `json:"stop,omitempty"`
 	Tools       []openAITool    `json:"tools,omitempty"`

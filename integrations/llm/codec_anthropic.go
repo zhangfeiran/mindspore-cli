@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const anthropicDefaultMaxTokens = 4096
+const anthropicDefaultMaxTokens = 64000
 
 type anthropicCodec struct {
 	defaultModel string
@@ -32,12 +32,13 @@ func (c *anthropicCodec) encodeRequest(req *CompletionRequest, stream bool) (ant
 		model = "claude-3-5-haiku-latest"
 	}
 
-	maxTokens := req.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = anthropicDefaultMaxTokens
-	}
-
 	system, messages := c.encodeMessages(req.Messages)
+	maxTokens := req.MaxTokens
+	if maxTokens == nil {
+		// Anthropic requests require max_tokens even when ms-cli has no explicit override.
+		defaultMaxTokens := anthropicDefaultMaxTokens
+		maxTokens = &defaultMaxTokens
+	}
 
 	return anthropicMessagesRequest{
 		Model:         model,
@@ -208,8 +209,8 @@ type anthropicMessagesRequest struct {
 	Model         string             `json:"model"`
 	Messages      []anthropicMessage `json:"messages"`
 	System        string             `json:"system,omitempty"`
-	Temperature   float32            `json:"temperature,omitempty"`
-	MaxTokens     int                `json:"max_tokens"`
+	Temperature   *float32           `json:"temperature,omitempty"`
+	MaxTokens     *int               `json:"max_tokens,omitempty"`
 	TopP          float32            `json:"top_p,omitempty"`
 	StopSequences []string           `json:"stop_sequences,omitempty"`
 	Tools         []anthropicTool    `json:"tools,omitempty"`

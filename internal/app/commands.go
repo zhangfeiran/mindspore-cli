@@ -442,8 +442,8 @@ Environment Variables:
   MSCLI_BASE_URL          Base URL
   MSCLI_MODEL             Default model
   MSCLI_API_KEY           API key
-  MSCLI_TEMPERATURE       Temperature
-  MSCLI_MAX_TOKENS        Max completion tokens
+  MSCLI_TEMPERATURE       Optional request temperature override
+  MSCLI_MAX_TOKENS        Optional request output token override
   MSCLI_CONTEXT_WINDOW    Context window tokens
   MSCLI_TIMEOUT           Request timeout seconds`
 

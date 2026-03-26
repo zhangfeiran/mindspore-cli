@@ -113,8 +113,8 @@ Use unified `MSCLI_*` names:
 - `MSCLI_MODEL`
 - `MSCLI_API_KEY`
 - `MSCLI_BASE_URL`
-- `MSCLI_TEMPERATURE`
-- `MSCLI_MAX_TOKENS`
+- `MSCLI_TEMPERATURE` for an optional per-request override
+- `MSCLI_MAX_TOKENS` for an optional per-request output limit override
 - `MSCLI_TIMEOUT`
 - `MSCLI_CONTEXT_WINDOW`
 
@@ -122,18 +122,19 @@ CLI flags `--api-key`, `--url`, `--model` are startup overrides for the current 
 
 
 
-### Model token defaults (auto + override)
+### Context window defaults and request overrides
 
 When `model.model` matches known families (`gpt-5` ~ `gpt-5.4`, `claude-4.5` ~ `claude-4.6`, `glm-4.7*`, `glm-5*`, `kimi-k2*`, `kimi-k2.5*`, `minimax-m2.5*`, `minimax-m2.7*`, `deepseek*`, `qwen3*`, `qwen3.5*`), ms-cli auto-fills:
 
-- `model.max_tokens`
 - `context.window`
 
 Precedence is:
 
-1. `MSCLI_MAX_TOKENS` / `MSCLI_CONTEXT_WINDOW`
+1. `MSCLI_CONTEXT_WINDOW`
 2. auto defaults from model name
 3. built-in defaults
+
+`MSCLI_MAX_TOKENS` and `MSCLI_TEMPERATURE` are request-only overrides. When unset, ms-cli omits those fields from outbound LLM requests, except the Anthropic path, which falls back to `max_tokens=64000`.
 
 ### Use OpenAI API
 

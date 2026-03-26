@@ -160,7 +160,7 @@ func TestRunPersistsSnapshotBeforeStreamingTaskEvents(t *testing.T) {
 	}
 	engine := NewEngine(EngineConfig{
 		MaxIterations: 1,
-		MaxTokens:     4096,
+		ContextWindow: 4096,
 	}, provider, tools.NewRegistry())
 
 	var log []string
@@ -211,7 +211,7 @@ func TestRunPersistsToolResultBeforeToolRender(t *testing.T) {
 
 	engine := NewEngine(EngineConfig{
 		MaxIterations: 2,
-		MaxTokens:     4096,
+		ContextWindow: 4096,
 	}, provider, registry)
 
 	var log []string
@@ -259,7 +259,7 @@ func TestRunPersistsToolErrorBeforeErrorRender(t *testing.T) {
 
 	engine := NewEngine(EngineConfig{
 		MaxIterations: 2,
-		MaxTokens:     4096,
+		ContextWindow: 4096,
 	}, provider, tools.NewRegistry())
 
 	var log []string

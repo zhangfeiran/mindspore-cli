@@ -185,8 +185,8 @@ type openAIResponsesRequest struct {
 	Input              []openAIResponsesInputItem `json:"input,omitempty"`
 	Instructions       string                     `json:"instructions,omitempty"`
 	Tools              []openAIResponsesTool      `json:"tools,omitempty"`
-	Temperature        float32                    `json:"temperature,omitempty"`
-	MaxOutputTokens    int                        `json:"max_output_tokens,omitempty"`
+	Temperature        *float32                   `json:"temperature,omitempty"`
+	MaxOutputTokens    *int                       `json:"max_output_tokens,omitempty"`
 	TopP               float32                    `json:"top_p,omitempty"`
 	PreviousResponseID string                     `json:"previous_response_id,omitempty"`
 	Stream             bool                       `json:"stream,omitempty"`

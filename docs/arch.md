@@ -27,7 +27,7 @@ ms-cli/
     project/               roadmap and weekly status helpers
     train/                 train request and target types
   agent/
-    context/               token budget and compaction
+    context/               context window management and compaction
     loop/                  ReAct-style execution engine (the core runtime)
     memory/                memory store, retrieval, and policy
     session/               session state and persistence

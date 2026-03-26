@@ -57,7 +57,7 @@ func (p *captureProvider) AvailableModels() []llm.ModelInfo {
 func newEngineForContextTests(provider llm.Provider) *Engine {
 	return NewEngine(EngineConfig{
 		MaxIterations: 1,
-		MaxTokens:     8000,
+		ContextWindow: 8000,
 	}, provider, tools.NewRegistry())
 }
 
@@ -65,7 +65,7 @@ func TestSetContextManagerPreservesSystemPrompt(t *testing.T) {
 	engine := newEngineForContextTests(&captureProvider{})
 
 	replacement := ctxmanager.NewManager(ctxmanager.ManagerConfig{
-		MaxTokens:     8000,
+		ContextWindow: 8000,
 		ReserveTokens: 4000,
 	})
 	if replacement.GetSystemPrompt() != nil {
@@ -87,7 +87,7 @@ func TestSetContextManagerKeepsExistingSystemPrompt(t *testing.T) {
 	engine := newEngineForContextTests(&captureProvider{})
 
 	replacement := ctxmanager.NewManager(ctxmanager.ManagerConfig{
-		MaxTokens:     8000,
+		ContextWindow: 8000,
 		ReserveTokens: 4000,
 	})
 	const customPrompt = "custom system prompt"
@@ -109,7 +109,7 @@ func TestRunUsesSystemPromptAfterContextManagerSwap(t *testing.T) {
 	engine := newEngineForContextTests(provider)
 
 	replacement := ctxmanager.NewManager(ctxmanager.ManagerConfig{
-		MaxTokens:     8000,
+		ContextWindow: 8000,
 		ReserveTokens: 4000,
 	})
 	engine.SetContextManager(replacement)
@@ -144,6 +144,37 @@ func TestRunUsesSystemPromptAfterContextManagerSwap(t *testing.T) {
 	if second.Content != "say hello" {
 		t.Fatalf("expected second message content to be user task, got %q", second.Content)
 	}
+}
+
+func TestRunPassesModelMaxTokensToProvider(t *testing.T) {
+	provider := &captureProvider{}
+	engine := NewEngine(EngineConfig{
+		MaxIterations: 1,
+		ContextWindow: 8000,
+		MaxTokens:     intPtr(1234),
+	}, provider, tools.NewRegistry())
+
+	_, err := engine.Run(Task{
+		ID:          "task-max-tokens",
+		Description: "say hello",
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if provider.lastReq == nil {
+		t.Fatal("expected provider to receive completion request")
+	}
+	if provider.lastReq.MaxTokens == nil {
+		t.Fatal("provider.lastReq.MaxTokens = nil, want value")
+	}
+	if got, want := *provider.lastReq.MaxTokens, 1234; got != want {
+		t.Fatalf("provider.lastReq.MaxTokens = %d, want %d", got, want)
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 type captureStreamIterator struct {

@@ -227,13 +227,13 @@ func (a *Application) replayHistory() {
 		return
 	}
 	usage := a.ctxManager.TokenUsage()
-	if usage.Max <= 0 {
+	if usage.ContextWindow <= 0 {
 		return
 	}
 	a.EventCh <- model.Event{
 		Type:    model.TokenUpdate,
 		CtxUsed: usage.Current,
-		CtxMax:  usage.Max,
+		CtxMax:  usage.ContextWindow,
 	}
 }
 

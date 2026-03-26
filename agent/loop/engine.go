@@ -18,8 +18,9 @@ import (
 // EngineConfig holds engine configuration.
 type EngineConfig struct {
 	MaxIterations  int
-	MaxTokens      int
-	Temperature    float32
+	ContextWindow  int
+	MaxTokens      *int
+	Temperature    *float32
 	TimeoutPerTurn time.Duration
 	SystemPrompt   string
 }
@@ -46,9 +47,6 @@ type TrajectoryRecorder struct {
 
 // NewEngine creates a new engine.
 func NewEngine(cfg EngineConfig, provider llm.Provider, tools *tools.Registry) *Engine {
-	if cfg.Temperature == 0 {
-		cfg.Temperature = 0.7
-	}
 	if cfg.SystemPrompt == "" {
 		cfg.SystemPrompt = DefaultSystemPrompt()
 	}
@@ -60,8 +58,8 @@ func NewEngine(cfg EngineConfig, provider llm.Provider, tools *tools.Registry) *
 	}
 
 	managerCfg := ctxmanager.DefaultManagerConfig()
-	if cfg.MaxTokens > 0 {
-		managerCfg.MaxTokens = cfg.MaxTokens
+	if cfg.ContextWindow > 0 {
+		managerCfg.ContextWindow = cfg.ContextWindow
 	}
 	managerCfg.ReserveTokens = 4000
 	engine.ctxManager = ctxmanager.NewManager(managerCfg)
@@ -215,6 +213,7 @@ func (ex *executor) callLLM(ctx context.Context) (*llm.CompletionResponse, error
 		Messages:    ex.requestMessages(),
 		Tools:       ex.engine.tools.ToLLMTools(),
 		Temperature: ex.engine.config.Temperature,
+		MaxTokens:   ex.engine.config.MaxTokens,
 	}
 
 	if ex.usesResponsesChain() && ex.responsesPreviousID != "" {
@@ -468,7 +467,7 @@ func (ex *executor) addToolEvent(toolName string, result *tools.Result) {
 func (ex *executor) addEvent(ev Event) {
 	usage := ex.engine.ctxManager.TokenUsage()
 	ev.CtxUsed = usage.Current
-	ev.CtxMax = usage.Max
+	ev.CtxMax = usage.ContextWindow
 	ev.TokensUsed = ex.totalUsage.TotalTokens
 	ex.events = append(ex.events, ev)
 	if ex.sink != nil {

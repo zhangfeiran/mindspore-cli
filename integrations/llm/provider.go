@@ -29,8 +29,8 @@ type CompletionRequest struct {
 	Model       string
 	Messages    []Message
 	Tools       []Tool
-	Temperature float32
-	MaxTokens   int
+	Temperature *float32
+	MaxTokens   *int
 	TopP        float32
 	Stop        []string
 }

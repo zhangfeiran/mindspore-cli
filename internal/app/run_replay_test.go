@@ -10,7 +10,7 @@ import (
 
 func TestReplayHistoryEmitsUsageSnapshotAfterBacklog(t *testing.T) {
 	ctxManager := agentctx.NewManager(agentctx.ManagerConfig{
-		MaxTokens:     4096,
+		ContextWindow: 4096,
 		ReserveTokens: 512,
 	})
 	ctxManager.SetSystemPrompt("system prompt")
@@ -40,7 +40,7 @@ func TestReplayHistoryEmitsUsageSnapshotAfterBacklog(t *testing.T) {
 	if second.CtxUsed != expected.Current {
 		t.Fatalf("token update ctx used = %d, want %d", second.CtxUsed, expected.Current)
 	}
-	if second.CtxMax != expected.Max {
-		t.Fatalf("token update ctx max = %d, want %d", second.CtxMax, expected.Max)
+	if second.CtxMax != expected.ContextWindow {
+		t.Fatalf("token update ctx max = %d, want %d", second.CtxMax, expected.ContextWindow)
 	}
 }

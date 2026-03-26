@@ -7,6 +7,40 @@ import (
 	"testing"
 )
 
+func TestAnthropicEncodeRequestDefaultsMaxTokens(t *testing.T) {
+	req, err := newAnthropicCodec("claude-test").encodeRequest(&CompletionRequest{
+		Messages: []Message{{Role: "user", Content: "ping"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encodeRequest() error = %v", err)
+	}
+
+	if req.MaxTokens == nil {
+		t.Fatal("req.MaxTokens = nil, want default value")
+	}
+	if got, want := *req.MaxTokens, anthropicDefaultMaxTokens; got != want {
+		t.Fatalf("req.MaxTokens = %d, want %d", got, want)
+	}
+}
+
+func TestAnthropicEncodeRequestPreservesExplicitMaxTokens(t *testing.T) {
+	maxTokens := 2048
+	req, err := newAnthropicCodec("claude-test").encodeRequest(&CompletionRequest{
+		Messages:  []Message{{Role: "user", Content: "ping"}},
+		MaxTokens: &maxTokens,
+	}, false)
+	if err != nil {
+		t.Fatalf("encodeRequest() error = %v", err)
+	}
+
+	if req.MaxTokens == nil {
+		t.Fatal("req.MaxTokens = nil, want explicit value")
+	}
+	if got, want := *req.MaxTokens, 2048; got != want {
+		t.Fatalf("req.MaxTokens = %d, want %d", got, want)
+	}
+}
+
 func TestAnthropicStreamIteratorAccumulatesToolUseJSONWithoutBuilderCopyPanic(t *testing.T) {
 	stream := strings.Join([]string{
 		mustAnthropicSSEEvent(t, "message_start", anthropicStreamMessageStartEvent{

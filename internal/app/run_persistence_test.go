@@ -24,7 +24,7 @@ func TestRunTaskWithoutLLMPersistsSessionBeforeReply(t *testing.T) {
 	})
 
 	ctxManager := agentctx.NewManager(agentctx.ManagerConfig{
-		MaxTokens:     4096,
+		ContextWindow: 4096,
 		ReserveTokens: 512,
 	})
 	ctxManager.SetSystemPrompt("system prompt")

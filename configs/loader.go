@@ -10,11 +10,10 @@ import (
 // LoadWithEnv loads built-in defaults and applies environment variable overrides.
 func LoadWithEnv() (*Config, error) {
 	cfg := DefaultConfig()
-	defaultModelMaxTokens := cfg.Model.MaxTokens
 	defaultContextWindow := cfg.Context.Window
 
-	// defaults-by-model > env > default
-	applyModelTokenDefaults(cfg, defaultModelMaxTokens, defaultContextWindow)
+	// model-derived context defaults > env overrides > built-in defaults
+	applyModelTokenDefaults(cfg, defaultContextWindow)
 	previousModel := cfg.Model.Model
 	ApplyEnvOverrides(cfg)
 	RefreshModelTokenDefaults(cfg, previousModel)
@@ -46,29 +45,17 @@ func ApplyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MSCLI_TEMPERATURE"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			cfg.Model.Temperature = f
+			cfg.Request.Temperature = &f
 		}
 	}
 	if v := os.Getenv("MSCLI_MAX_TOKENS"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Model.MaxTokens = i
+			cfg.Request.MaxTokens = &i
 		}
 	}
 	if v := os.Getenv("MSCLI_TIMEOUT"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			cfg.Model.TimeoutSec = i
-		}
-	}
-
-	// Budget settings
-	if v := os.Getenv("MSCLI_BUDGET_TOKENS"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Budget.MaxTokens = i
-		}
-	}
-	if v := os.Getenv("MSCLI_BUDGET_COST"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			cfg.Budget.MaxCostUSD = f
 		}
 	}
 

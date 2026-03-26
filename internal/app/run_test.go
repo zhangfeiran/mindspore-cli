@@ -61,7 +61,7 @@ func TestInterruptTokenCancelsActiveTask(t *testing.T) {
 	provider := &blockingStreamProvider{started: make(chan struct{})}
 	engine := loop.NewEngine(loop.EngineConfig{
 		MaxIterations: 1,
-		MaxTokens:     4096,
+		ContextWindow: 4096,
 	}, provider, tools.NewRegistry())
 
 	app := &Application{

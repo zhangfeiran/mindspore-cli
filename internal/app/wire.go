@@ -158,7 +158,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	registerSkillCommands(skillLoader.List())
 
 	ctxManager := agentctx.NewManager(agentctx.ManagerConfig{
-		MaxTokens:           config.Context.Window,
+		ContextWindow:       config.Context.Window,
 		ReserveTokens:       config.Context.ReserveTokens,
 		CompactionThreshold: config.Context.CompactionThreshold,
 		MaxHistoryRounds:    config.Context.MaxHistoryRounds,
@@ -197,8 +197,9 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 
 	engineCfg := loop.EngineConfig{
 		MaxIterations:  0,
-		MaxTokens:      config.Budget.MaxTokens,
-		Temperature:    float32(config.Model.Temperature),
+		ContextWindow:  config.Context.Window,
+		MaxTokens:      requestMaxTokensPtr(config.Request.MaxTokens),
+		Temperature:    requestTemperaturePtr(config.Request.Temperature),
 		TimeoutPerTurn: time.Duration(config.Model.TimeoutSec) * time.Second,
 		SystemPrompt:   systemPrompt,
 	}
@@ -276,13 +277,14 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 
 	engineCfg := loop.EngineConfig{
 		MaxIterations:  10,
-		MaxTokens:      a.Config.Budget.MaxTokens,
-		Temperature:    float32(a.Config.Model.Temperature),
+		ContextWindow:  a.Config.Context.Window,
+		MaxTokens:      requestMaxTokensPtr(a.Config.Request.MaxTokens),
+		Temperature:    requestTemperaturePtr(a.Config.Request.Temperature),
 		TimeoutPerTurn: time.Duration(a.Config.Model.TimeoutSec) * time.Second,
 	}
 	newEngine := loop.NewEngine(engineCfg, provider, a.toolRegistry)
 	if a.ctxManager != nil {
-		if err := a.ctxManager.SetTokenLimits(a.Config.Context.Window, a.Config.Context.ReserveTokens); err != nil {
+		if err := a.ctxManager.SetContextWindowLimits(a.Config.Context.Window, a.Config.Context.ReserveTokens); err != nil {
 			return fmt.Errorf("update context limits: %w", err)
 		}
 	}
@@ -355,6 +357,22 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager) *loop.Traje
 			return s.SaveSnapshot(systemPrompt, cm.GetNonSystemMessages())
 		},
 	}
+}
+
+func requestMaxTokensPtr(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	copy := *v
+	return &copy
+}
+
+func requestTemperaturePtr(v *float64) *float32 {
+	if v == nil {
+		return nil
+	}
+	copy := float32(*v)
+	return &copy
 }
 
 func initTools(cfg *configs.Config, workDir string) *tools.Registry {

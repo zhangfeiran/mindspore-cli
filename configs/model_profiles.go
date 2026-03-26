@@ -5,65 +5,64 @@ import (
 	"strings"
 )
 
-// ModelTokenProfile defines default token limits for a model family.
+// ModelTokenProfile defines context defaults plus reference token metadata for a model family.
+// MaxTokens is informational only and is not auto-applied to outbound requests.
 type ModelTokenProfile struct {
-	ModelMaxTokens int `yaml:"model_max_tokens"`
-	ContextWindow  int `yaml:"context_window"`
+	MaxTokens     int `yaml:"max_tokens,omitempty"`
+	ContextWindow int `yaml:"context_window"`
 }
 
 var builtinModelTokenProfiles = map[string]ModelTokenProfile{
 	// OpenAI GPT-5 family.
-	"gpt-5.4": {ModelMaxTokens: 128000, ContextWindow: 1050000},
-	"gpt-5.3": {ModelMaxTokens: 128000, ContextWindow: 400000},
-	"gpt-5.2": {ModelMaxTokens: 128000, ContextWindow: 400000},
-	"gpt-5.1": {ModelMaxTokens: 128000, ContextWindow: 400000},
-	"gpt-5":   {ModelMaxTokens: 128000, ContextWindow: 400000},
+	"gpt-5.4": {MaxTokens: 128000, ContextWindow: 1050000},
+	"gpt-5.3": {MaxTokens: 128000, ContextWindow: 400000},
+	"gpt-5.2": {MaxTokens: 128000, ContextWindow: 400000},
+	"gpt-5.1": {MaxTokens: 128000, ContextWindow: 400000},
+	"gpt-5":   {MaxTokens: 128000, ContextWindow: 400000},
 
 	// Anthropic Claude 4.5-4.6 family.
-	"claude-opus-4.6":   {ModelMaxTokens: 128000, ContextWindow: 1000000},
-	"claude-opus-4-6":   {ModelMaxTokens: 128000, ContextWindow: 1000000},
-	"claude-sonnet-4.6": {ModelMaxTokens: 64000, ContextWindow: 1000000},
-	"claude-sonnet-4-6": {ModelMaxTokens: 64000, ContextWindow: 1000000},
-	"claude-haiku-4.5":  {ModelMaxTokens: 64000, ContextWindow: 200000},
-	"claude-haiku-4-5":  {ModelMaxTokens: 64000, ContextWindow: 200000},
+	"claude-opus-4.6":    {MaxTokens: 128000, ContextWindow: 1000000},
+	"claude-opus-4-6":    {MaxTokens: 128000, ContextWindow: 1000000},
+	"claude-sonnet-4.6":  {MaxTokens: 64000, ContextWindow: 1000000},
+	"claude-sonnet-4-6":  {MaxTokens: 64000, ContextWindow: 1000000},
+	"claude-haiku-4.5":   {MaxTokens: 64000, ContextWindow: 200000},
+	"claude-haiku-4-5":   {MaxTokens: 64000, ContextWindow: 200000},
+	"LongCat-Flash-Chat": {ContextWindow: 200000},
 
 	// GLM family.
-	"glm-4.7": {ModelMaxTokens: 131072, ContextWindow: 200000},
-	"glm-5":   {ModelMaxTokens: 131072, ContextWindow: 200000},
+	"glm-4.7": {MaxTokens: 131072, ContextWindow: 200000},
+	"glm-5":   {MaxTokens: 131072, ContextWindow: 200000},
 
 	// Moonshot Kimi family.
-	"kimi-k2.5": {ModelMaxTokens: 32768, ContextWindow: 256000},
-	"kimi-k2":   {ModelMaxTokens: 32000, ContextWindow: 128000},
+	"kimi-k2.5": {MaxTokens: 32768, ContextWindow: 256000},
+	"kimi-k2":   {MaxTokens: 32000, ContextWindow: 128000},
 
 	// MiniMax family.
-	"minimax-m2.7": {ModelMaxTokens: 204800, ContextWindow: 204800},
-	"minimax-m2.5": {ModelMaxTokens: 204800, ContextWindow: 204800},
+	"minimax-m2.7": {MaxTokens: 204800, ContextWindow: 204800},
+	"minimax-m2.5": {MaxTokens: 204800, ContextWindow: 204800},
 
 	// DeepSeek family (API model names).
-	"deepseek-reasoner": {ModelMaxTokens: 64000, ContextWindow: 128000},
-	"deepseek-chat":     {ModelMaxTokens: 8000, ContextWindow: 128000},
-	"deepseek":          {ModelMaxTokens: 8000, ContextWindow: 128000},
+	"deepseek-reasoner": {MaxTokens: 64000, ContextWindow: 128000},
+	"deepseek-chat":     {MaxTokens: 8000, ContextWindow: 128000},
+	"deepseek":          {MaxTokens: 8000, ContextWindow: 128000},
 
 	// Qwen families.
-	"qwen3.5": {ModelMaxTokens: 65536, ContextWindow: 1000000},
-	"qwen3":   {ModelMaxTokens: 65536, ContextWindow: 262144},
+	"qwen3.5": {MaxTokens: 65536, ContextWindow: 1000000},
+	"qwen3":   {MaxTokens: 65536, ContextWindow: 262144},
 }
 
-func applyModelTokenDefaults(cfg *Config, defaultModelMaxTokens, defaultContextWindow int) {
+func applyModelTokenDefaults(cfg *Config, defaultContextWindow int) {
 	profile, ok := matchModelTokenProfile(cfg.Model.Model, cfg.ModelProfiles)
 	if !ok {
 		return
 	}
 
-	if cfg.Model.MaxTokens == defaultModelMaxTokens && profile.ModelMaxTokens > 0 {
-		cfg.Model.MaxTokens = profile.ModelMaxTokens
-	}
 	if cfg.Context.Window == defaultContextWindow && profile.ContextWindow > 0 {
 		cfg.Context.Window = profile.ContextWindow
 	}
 }
 
-// RefreshModelTokenDefaults reapplies auto token defaults after a model change.
+// RefreshModelTokenDefaults reapplies auto context window defaults after a model change.
 // Explicit config overrides are preserved; only values still on the default or
 // previous auto-profile values are updated.
 func RefreshModelTokenDefaults(cfg *Config, previousModel string) {
@@ -74,13 +73,6 @@ func RefreshModelTokenDefaults(cfg *Config, previousModel string) {
 	defaults := DefaultConfig()
 	previousProfile, previousProfileMatched := matchModelTokenProfile(previousModel, cfg.ModelProfiles)
 	nextProfile, nextProfileMatched := matchModelTokenProfile(cfg.Model.Model, cfg.ModelProfiles)
-
-	if shouldRefreshAutoTokenValue(cfg.Model.MaxTokens, defaults.Model.MaxTokens, previousProfile.ModelMaxTokens, previousProfileMatched) {
-		cfg.Model.MaxTokens = defaults.Model.MaxTokens
-		if nextProfileMatched && nextProfile.ModelMaxTokens > 0 {
-			cfg.Model.MaxTokens = nextProfile.ModelMaxTokens
-		}
-	}
 
 	if shouldRefreshAutoTokenValue(cfg.Context.Window, defaults.Context.Window, previousProfile.ContextWindow, previousProfileMatched) {
 		cfg.Context.Window = defaults.Context.Window

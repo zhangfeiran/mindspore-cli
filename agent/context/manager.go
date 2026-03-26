@@ -10,28 +10,26 @@ import (
 
 // ManagerConfig holds the manager configuration.
 type ManagerConfig struct {
-	MaxTokens           int
+	ContextWindow       int
 	ReserveTokens       int
 	CompactionThreshold float64
 	MaxHistoryRounds    int
 
 	// 新增配置
-	EnableSmartCompact bool             // 启用智能压缩
-	CompactStrategy    CompactStrategy  // 压缩策略
-	Allocation         BudgetAllocation // 预算分配
-	EnablePriority     bool             // 启用优先级系统
+	EnableSmartCompact bool            // 启用智能压缩
+	CompactStrategy    CompactStrategy // 压缩策略
+	EnablePriority     bool            // 启用优先级系统
 }
 
 // DefaultManagerConfig 返回默认配置
 func DefaultManagerConfig() ManagerConfig {
 	return ManagerConfig{
-		MaxTokens:           24000,
+		ContextWindow:       24000,
 		ReserveTokens:       4000,
 		CompactionThreshold: 0.85,
 		MaxHistoryRounds:    10,
 		EnableSmartCompact:  true,
 		CompactStrategy:     CompactStrategyHybrid,
-		Allocation:          DefaultBudgetAllocation(),
 		EnablePriority:      true,
 	}
 }
@@ -45,7 +43,6 @@ type Manager struct {
 	usage    TokenUsage
 
 	// 增强组件
-	budget    *Budget
 	tokenizer *Tokenizer
 	compactor *Compactor
 	scorer    *PriorityScorer
@@ -56,10 +53,10 @@ type Manager struct {
 
 // TokenUsage represents token usage statistics.
 type TokenUsage struct {
-	Current   int
-	Max       int
-	Reserved  int
-	Available int
+	Current       int
+	ContextWindow int
+	Reserved      int
+	Available     int
 }
 
 // Stats 上下文统计
@@ -73,8 +70,8 @@ type Stats struct {
 
 // NewManager creates a new context manager.
 func NewManager(cfg ManagerConfig) *Manager {
-	if cfg.MaxTokens == 0 {
-		cfg.MaxTokens = 24000
+	if cfg.ContextWindow == 0 {
+		cfg.ContextWindow = 24000
 	}
 	if cfg.ReserveTokens == 0 {
 		cfg.ReserveTokens = 4000
@@ -85,15 +82,6 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.MaxHistoryRounds == 0 {
 		cfg.MaxHistoryRounds = 10
 	}
-	if cfg.Allocation.SystemPercent == 0 &&
-		cfg.Allocation.HistoryPercent == 0 &&
-		cfg.Allocation.ToolResultPercent == 0 &&
-		cfg.Allocation.ReservePercent == 0 {
-		cfg.Allocation = DefaultBudgetAllocation()
-	}
-
-	// 创建预算管理器
-	budget, _ := NewBudget(cfg.MaxTokens, cfg.Allocation)
 
 	// 创建压缩器
 	compactor := NewCompactor(CompactorConfig{
@@ -104,14 +92,13 @@ func NewManager(cfg ManagerConfig) *Manager {
 	m := &Manager{
 		config:    cfg,
 		messages:  make([]llm.Message, 0),
-		budget:    budget,
 		tokenizer: NewTokenizer(),
 		compactor: compactor,
 		scorer:    NewPriorityScorer(),
 		usage: TokenUsage{
-			Max:       cfg.MaxTokens,
-			Reserved:  cfg.ReserveTokens,
-			Available: cfg.MaxTokens - cfg.ReserveTokens,
+			ContextWindow: cfg.ContextWindow,
+			Reserved:      cfg.ReserveTokens,
+			Available:     cfg.ContextWindow - cfg.ReserveTokens,
 		},
 	}
 
@@ -125,12 +112,6 @@ func (m *Manager) SetSystemPrompt(content string) {
 
 	msg := llm.NewSystemMessage(content)
 	m.system = &msg
-
-	// 更新系统预算
-	if m.budget != nil {
-		systemTokens := m.tokenizer.EstimateMessage(msg)
-		m.budget.SetSystemUsage(systemTokens)
-	}
 
 	m.recalculateUsage()
 }
@@ -154,18 +135,13 @@ func (m *Manager) AddMessage(msg llm.Message) error {
 
 	// 估算新消息的 Token
 	msgTokens := m.tokenizer.EstimateMessage(msg)
-	maxUsable := m.config.MaxTokens - m.config.ReserveTokens
+	maxUsable := m.config.ContextWindow - m.config.ReserveTokens
 	if msgTokens > maxUsable {
 		return fmt.Errorf("single message too large for context budget: %d tokens > %d", msgTokens, maxUsable)
 	}
 
 	// 先追加，再按真实占用触发后置压缩
 	m.messages = append(m.messages, msg)
-
-	// 更新预算
-	if m.budget != nil {
-		m.budget.SetHistoryUsage(m.tokenizer.EstimateMessages(m.messages))
-	}
 
 	// 后置压缩：基于最新上下文做决策，避免仅靠预估触发
 	if m.shouldCompactLocked(0) {
@@ -174,13 +150,10 @@ func (m *Manager) AddMessage(msg llm.Message) error {
 		}
 	}
 
-	// 紧急压缩：后置压缩后仍超预算时启用更激进策略
-	if m.budget != nil {
-		currentHistory := m.tokenizer.EstimateMessages(m.messages)
-		if currentHistory > m.budget.GetHistoryBudget() {
-			if err := m.emergencyCompactLocked(); err != nil {
-				return fmt.Errorf("emergency compact: %w", err)
-			}
+	// 紧急压缩：后置压缩后仍超上下文窗口时启用更激进策略
+	if m.totalTokensLocked() > m.maxUsableTokensLocked() {
+		if err := m.emergencyCompactLocked(); err != nil {
+			return fmt.Errorf("emergency compact: %w", err)
 		}
 	}
 
@@ -229,10 +202,6 @@ func (m *Manager) SetNonSystemMessages(msgs []llm.Message) {
 	m.messages = make([]llm.Message, len(msgs))
 	copy(m.messages, msgs)
 
-	if m.budget != nil {
-		m.budget.SetHistoryUsage(m.tokenizer.EstimateMessages(m.messages))
-	}
-
 	m.stats.MessageCount = len(m.messages)
 	m.stats.ToolCallCount = 0
 	for _, msg := range m.messages {
@@ -250,9 +219,6 @@ func (m *Manager) Clear() {
 	defer m.mu.Unlock()
 
 	m.messages = make([]llm.Message, 0)
-	if m.budget != nil {
-		m.budget.SetHistoryUsage(0)
-	}
 	m.recalculateUsage()
 }
 
@@ -272,34 +238,23 @@ func (m *Manager) TokenUsage() TokenUsage {
 	return m.usage
 }
 
-// SetTokenLimits updates the runtime context budget limits.
-func (m *Manager) SetTokenLimits(maxTokens, reserveTokens int) error {
-	if maxTokens <= 0 {
-		return fmt.Errorf("max tokens must be positive")
+// SetContextWindowLimits updates the runtime context window limits.
+func (m *Manager) SetContextWindowLimits(contextWindow, reserveTokens int) error {
+	if contextWindow <= 0 {
+		return fmt.Errorf("context window must be positive")
 	}
 	if reserveTokens < 0 {
 		return fmt.Errorf("reserve tokens must be non-negative")
 	}
-	if reserveTokens >= maxTokens {
-		return fmt.Errorf("reserve tokens must be less than max tokens")
+	if reserveTokens >= contextWindow {
+		return fmt.Errorf("reserve tokens must be less than context window")
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	budget, err := NewBudget(maxTokens, m.config.Allocation)
-	if err != nil {
-		return fmt.Errorf("new budget: %w", err)
-	}
-
-	m.config.MaxTokens = maxTokens
+	m.config.ContextWindow = contextWindow
 	m.config.ReserveTokens = reserveTokens
-	m.budget = budget
-
-	if m.system != nil {
-		m.budget.SetSystemUsage(m.tokenizer.EstimateMessage(*m.system))
-	}
-	m.budget.SetHistoryUsage(m.tokenizer.EstimateMessages(m.messages))
 	m.recalculateUsage()
 
 	return nil
@@ -310,31 +265,13 @@ func (m *Manager) EstimateTokens(msgs []llm.Message) int {
 	return m.tokenizer.EstimateMessages(msgs)
 }
 
-// IsWithinBudget checks if adding a message would exceed budget.
+// IsWithinBudget checks if adding a message would exceed the context window.
 func (m *Manager) IsWithinBudget(msg llm.Message) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.budget == nil {
-		// 回退到简单估算
-		estimated := m.tokenizer.EstimateMessages(m.messages) + m.tokenizer.EstimateMessage(msg)
-		return estimated <= m.config.MaxTokens-m.config.ReserveTokens
-	}
-
-	currentHistory := m.tokenizer.EstimateMessages(m.messages)
-	msgTokens := m.tokenizer.EstimateMessage(msg)
-	return currentHistory+msgTokens <= m.budget.GetHistoryBudget()
-}
-
-// GetBudgetStats returns budget statistics.
-func (m *Manager) GetBudgetStats() BudgetStats {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if m.budget == nil {
-		return BudgetStats{}
-	}
-	return m.budget.GetStats()
+	estimated := m.totalTokensLocked() + m.tokenizer.EstimateMessage(msg)
+	return estimated <= m.maxUsableTokensLocked()
 }
 
 // GetStats returns context statistics.
@@ -346,7 +283,7 @@ func (m *Manager) GetStats() map[string]any {
 		"total_messages":    len(m.messages),
 		"has_system_prompt": m.system != nil,
 		"token_usage":       m.usage,
-		"max_tokens":        m.config.MaxTokens,
+		"context_window":    m.config.ContextWindow,
 		"compact_count":     m.stats.CompactCount,
 		"tool_call_count":   m.stats.ToolCallCount,
 		"last_compact_at":   m.stats.LastCompactAt,
@@ -358,11 +295,6 @@ func (m *Manager) GetDetailedStats() map[string]any {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	budgetStats := BudgetStats{}
-	if m.budget != nil {
-		budgetStats = m.budget.GetStats()
-	}
-
 	stats := map[string]any{
 		"messages": map[string]any{
 			"total":     len(m.messages),
@@ -371,13 +303,12 @@ func (m *Manager) GetDetailedStats() map[string]any {
 			"tool":      m.countByRole("tool"),
 		},
 		"tokens": map[string]any{
-			"current":   m.usage.Current,
-			"max":       m.usage.Max,
-			"reserved":  m.usage.Reserved,
-			"available": m.usage.Available,
+			"current":        m.usage.Current,
+			"context_window": m.usage.ContextWindow,
+			"reserved":       m.usage.Reserved,
+			"available":      m.usage.Available,
 		},
-		"budget": budgetStats,
-		"stats":  m.stats,
+		"stats": m.stats,
 	}
 
 	return stats
@@ -386,19 +317,8 @@ func (m *Manager) GetDetailedStats() map[string]any {
 // shouldCompactLocked checks if compaction is needed (must hold lock).
 func (m *Manager) shouldCompactLocked(additionalTokens int) bool {
 	threshold := m.compactionThresholdPercentLocked()
-	if m.budget != nil {
-		current := m.tokenizer.EstimateMessages(m.messages) + additionalTokens
-		systemTokens := 0
-		if m.system != nil {
-			systemTokens = m.tokenizer.EstimateMessage(*m.system)
-		}
-		usagePercent := float64(current+systemTokens) / float64(m.config.MaxTokens) * 100
-		return usagePercent >= threshold
-	}
-
-	// 回退到简单估算
-	estimatedTokens := m.tokenizer.EstimateMessages(m.messages) + additionalTokens
-	return float64(estimatedTokens) >= float64(m.config.MaxTokens)*(threshold/100.0)
+	estimatedTokens := m.totalTokensLocked() + additionalTokens
+	return float64(estimatedTokens) >= float64(m.config.ContextWindow)*(threshold/100.0)
 }
 
 // compactLocked compacts the context (must hold lock).
@@ -430,11 +350,6 @@ func (m *Manager) compactLocked() error {
 		}
 	}
 
-	// 更新预算
-	if m.budget != nil {
-		m.budget.SetHistoryUsage(m.tokenizer.EstimateMessages(m.messages))
-	}
-
 	m.recalculateUsage()
 	return nil
 }
@@ -463,11 +378,7 @@ func (m *Manager) emergencyCompactLocked() error {
 		m.stats.LastCompactAt = &now
 	}
 
-	// 更新预算
-	if m.budget != nil {
-		m.budget.SetHistoryUsage(m.tokenizer.EstimateMessages(m.messages))
-	}
-
+	m.recalculateUsage()
 	return nil
 }
 
@@ -489,19 +400,28 @@ func (m *Manager) compactionThresholdPercentLocked() float64 {
 
 // recalculateUsage recalculates token usage (must hold lock).
 func (m *Manager) recalculateUsage() {
+	total := m.totalTokensLocked()
+
+	m.usage = TokenUsage{
+		Current:       total,
+		ContextWindow: m.config.ContextWindow,
+		Reserved:      m.config.ReserveTokens,
+		Available:     m.config.ContextWindow - total - m.config.ReserveTokens,
+	}
+
+	m.stats.TotalTokensUsed = total
+}
+
+func (m *Manager) totalTokensLocked() int {
 	total := m.tokenizer.EstimateMessages(m.messages)
 	if m.system != nil {
 		total += m.tokenizer.EstimateMessage(*m.system)
 	}
+	return total
+}
 
-	m.usage = TokenUsage{
-		Current:   total,
-		Max:       m.config.MaxTokens,
-		Reserved:  m.config.ReserveTokens,
-		Available: m.config.MaxTokens - total - m.config.ReserveTokens,
-	}
-
-	m.stats.TotalTokensUsed = total
+func (m *Manager) maxUsableTokensLocked() int {
+	return m.config.ContextWindow - m.config.ReserveTokens
 }
 
 // countByRole counts messages by role (must hold lock).
