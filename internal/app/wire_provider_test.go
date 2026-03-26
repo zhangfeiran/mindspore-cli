@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/vigo999/ms-cli/agent/loop"
@@ -167,6 +169,44 @@ func (it *captureTestStreamIterator) Close() error {
 	return nil
 }
 
+type scriptedAppStreamProvider struct {
+	responses []*llm.CompletionResponse
+}
+
+func (p *scriptedAppStreamProvider) Name() string {
+	return "scripted"
+}
+
+func (p *scriptedAppStreamProvider) Complete(context.Context, *llm.CompletionRequest) (*llm.CompletionResponse, error) {
+	return nil, io.EOF
+}
+
+func (p *scriptedAppStreamProvider) CompleteStream(context.Context, *llm.CompletionRequest) (llm.StreamIterator, error) {
+	if len(p.responses) == 0 {
+		return &captureTestStreamIterator{}, nil
+	}
+
+	resp := p.responses[0]
+	p.responses = p.responses[1:]
+
+	return &captureTestStreamIterator{
+		chunks: []llm.StreamChunk{{
+			Content:      resp.Content,
+			ToolCalls:    append([]llm.ToolCall(nil), resp.ToolCalls...),
+			FinishReason: resp.FinishReason,
+			Usage:        &resp.Usage,
+		}},
+	}, nil
+}
+
+func (p *scriptedAppStreamProvider) SupportsTools() bool {
+	return true
+}
+
+func (p *scriptedAppStreamProvider) AvailableModels() []llm.ModelInfo {
+	return nil
+}
+
 func TestWirePassesMSCLIMaxTokensToModelRequests(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -293,4 +333,90 @@ func TestWirePassesMSCLITemperatureToModelRequests(t *testing.T) {
 	if got, want := *provider.lastReq.Temperature, float32(0.25); got != want {
 		t.Fatalf("provider.lastReq.Temperature = %v, want %v", got, want)
 	}
+}
+
+func TestWireAndSetProviderRespectMSCLIMaxIterations(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MSCLI_PROVIDER", "openai-completion")
+	t.Setenv("MSCLI_API_KEY", "token")
+	t.Setenv("MSCLI_MODEL", "gpt-4o-mini")
+	t.Setenv("MSCLI_MAX_ITERATIONS", "1")
+	t.Setenv("MSCLI_PERMISSIONS_SKIP", "true")
+
+	tempDir := t.TempDir()
+	t.Chdir(tempDir)
+
+	if err := os.WriteFile("README.md", []byte("hello"), 0600); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+
+	args, err := json.Marshal(map[string]string{"path": "README.md"})
+	if err != nil {
+		t.Fatalf("marshal tool args: %v", err)
+	}
+
+	newProvider := func() llm.Provider {
+		return &scriptedAppStreamProvider{
+			responses: []*llm.CompletionResponse{
+				{
+					ToolCalls: []llm.ToolCall{{
+						ID:   "call-read-1",
+						Type: "function",
+						Function: llm.ToolCallFunc{
+							Name:      "read",
+							Arguments: args,
+						},
+					}},
+					FinishReason: llm.FinishToolCalls,
+				},
+				{
+					Content:      "done",
+					FinishReason: llm.FinishStop,
+				},
+			},
+		}
+	}
+
+	origBuildProvider := buildProvider
+	buildProvider = func(resolved llm.ResolvedConfig) (llm.Provider, error) {
+		return newProvider(), nil
+	}
+	defer func() { buildProvider = origBuildProvider }()
+
+	app, err := Wire(BootstrapConfig{})
+	if err != nil {
+		t.Fatalf("Wire() error = %v", err)
+	}
+
+	assertMaxIterationsFailure := func(taskID string) {
+		t.Helper()
+
+		events, err := app.Engine.Run(loop.Task{
+			ID:          taskID,
+			Description: "read the file",
+		})
+		if err != nil {
+			t.Fatalf("Engine.Run() error = %v", err)
+		}
+		if len(events) == 0 {
+			t.Fatal("expected events, got none")
+		}
+
+		last := events[len(events)-1]
+		if got, want := last.Type, loop.EventTaskFailed; got != want {
+			t.Fatalf("last event type = %q, want %q", got, want)
+		}
+		if got, want := last.Message, "Task exceeded maximum iterations."; got != want {
+			t.Fatalf("last event message = %q, want %q", got, want)
+		}
+	}
+
+	assertMaxIterationsFailure("wire-max-iterations")
+
+	if err := app.SetProvider("", "gpt-4o-mini", ""); err != nil {
+		t.Fatalf("SetProvider() error = %v", err)
+	}
+
+	assertMaxIterationsFailure("set-provider-max-iterations")
 }

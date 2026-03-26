@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"testing"
 
@@ -170,6 +171,90 @@ func TestRunPassesModelMaxTokensToProvider(t *testing.T) {
 	}
 	if got, want := *provider.lastReq.MaxTokens, 1234; got != want {
 		t.Fatalf("provider.lastReq.MaxTokens = %d, want %d", got, want)
+	}
+}
+
+func TestRunCompletesWhenStopOccursAtIterationLimit(t *testing.T) {
+	provider := &scriptedStreamProvider{
+		responses: []*llm.CompletionResponse{{
+			Content:      "done",
+			FinishReason: llm.FinishStop,
+		}},
+	}
+
+	engine := NewEngine(EngineConfig{
+		MaxIterations: 1,
+		ContextWindow: 4096,
+	}, provider, tools.NewRegistry())
+
+	events, err := engine.Run(Task{
+		ID:          "task-complete-at-limit",
+		Description: "say done",
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+
+	last := events[len(events)-1]
+	if got, want := last.Type, EventTaskCompleted; got != want {
+		t.Fatalf("last event type = %q, want %q", got, want)
+	}
+}
+
+func TestRunFailsWhenIterationBudgetExpiresBeforeCompletion(t *testing.T) {
+	args, err := json.Marshal(map[string]string{"path": "README.md"})
+	if err != nil {
+		t.Fatalf("marshal tool args: %v", err)
+	}
+
+	provider := &scriptedStreamProvider{
+		responses: []*llm.CompletionResponse{
+			{
+				ToolCalls: []llm.ToolCall{{
+					ID:   "call-read-1",
+					Type: "function",
+					Function: llm.ToolCallFunc{
+						Name:      "read",
+						Arguments: args,
+					},
+				}},
+				FinishReason: llm.FinishToolCalls,
+			},
+			{
+				Content:      "done",
+				FinishReason: llm.FinishStop,
+			},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	registry.MustRegister(stubTool{name: "read", content: "file contents", summary: "1 line"})
+
+	engine := NewEngine(EngineConfig{
+		MaxIterations: 1,
+		ContextWindow: 4096,
+	}, provider, registry)
+
+	events, err := engine.Run(Task{
+		ID:          "task-exceed-limit",
+		Description: "read the file",
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+
+	last := events[len(events)-1]
+	if got, want := last.Type, EventTaskFailed; got != want {
+		t.Fatalf("last event type = %q, want %q", got, want)
+	}
+	if got, want := last.Message, "Task exceeded maximum iterations."; got != want {
+		t.Fatalf("last event message = %q, want %q", got, want)
 	}
 }
 

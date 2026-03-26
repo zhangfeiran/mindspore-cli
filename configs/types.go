@@ -45,8 +45,9 @@ type ModelConfig struct {
 
 // RequestConfig holds optional per-request overrides sourced from env.
 type RequestConfig struct {
-	Temperature *float64 `yaml:"-"`
-	MaxTokens   *int     `yaml:"-"`
+	Temperature   *float64 `yaml:"-"`
+	MaxTokens     *int     `yaml:"-"`
+	MaxIterations *int     `yaml:"-"`
 }
 
 // UIConfig holds the UI configuration.
@@ -189,6 +190,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("max_tokens must be non-negative")
 	}
 
+	if c.Request.MaxIterations != nil && *c.Request.MaxIterations < 0 {
+		return fmt.Errorf("max_iterations must be non-negative")
+	}
+
 	if c.Context.Window < c.Context.ReserveTokens {
 		return fmt.Errorf("window must be greater than reserve_tokens")
 	}
@@ -228,6 +233,10 @@ func (c *Config) Merge(other *Config) {
 	if other.Request.MaxTokens != nil {
 		v := *other.Request.MaxTokens
 		c.Request.MaxTokens = &v
+	}
+	if other.Request.MaxIterations != nil {
+		v := *other.Request.MaxIterations
+		c.Request.MaxIterations = &v
 	}
 
 	if other.Context.Window != 0 {

@@ -202,14 +202,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		ctxManager.SetSystemPrompt(systemPrompt)
 	}
 
-	engineCfg := loop.EngineConfig{
-		MaxIterations:  0,
-		ContextWindow:  config.Context.Window,
-		MaxTokens:      requestMaxTokensPtr(config.Request.MaxTokens),
-		Temperature:    requestTemperaturePtr(config.Request.Temperature),
-		TimeoutPerTurn: time.Duration(config.Model.TimeoutSec) * time.Second,
-		SystemPrompt:   systemPrompt,
-	}
+	engineCfg := newEngineConfig(config, systemPrompt)
 	engine := loop.NewEngine(engineCfg, provider, toolRegistry)
 	engine.SetContextManager(ctxManager)
 	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager))
@@ -315,13 +308,14 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 		a.llmReady = true
 	}
 
-	engineCfg := loop.EngineConfig{
-		MaxIterations:  10,
-		ContextWindow:  a.Config.Context.Window,
-		MaxTokens:      requestMaxTokensPtr(a.Config.Request.MaxTokens),
-		Temperature:    requestTemperaturePtr(a.Config.Request.Temperature),
-		TimeoutPerTurn: time.Duration(a.Config.Model.TimeoutSec) * time.Second,
+	systemPrompt := ""
+	if a.ctxManager != nil {
+		if msg := a.ctxManager.GetSystemPrompt(); msg != nil {
+			systemPrompt = msg.Content
+		}
 	}
+
+	engineCfg := newEngineConfig(a.Config, systemPrompt)
 	newEngine := loop.NewEngine(engineCfg, provider, a.toolRegistry)
 	if a.ctxManager != nil {
 		if err := a.ctxManager.SetContextWindowLimits(a.Config.Context.Window, a.Config.Context.ReserveTokens); err != nil {
@@ -413,6 +407,24 @@ func requestTemperaturePtr(v *float64) *float32 {
 	}
 	copy := float32(*v)
 	return &copy
+}
+
+func requestMaxIterations(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func newEngineConfig(cfg *configs.Config, systemPrompt string) loop.EngineConfig {
+	return loop.EngineConfig{
+		MaxIterations:  requestMaxIterations(cfg.Request.MaxIterations),
+		ContextWindow:  cfg.Context.Window,
+		MaxTokens:      requestMaxTokensPtr(cfg.Request.MaxTokens),
+		Temperature:    requestTemperaturePtr(cfg.Request.Temperature),
+		TimeoutPerTurn: time.Duration(cfg.Model.TimeoutSec) * time.Second,
+		SystemPrompt:   systemPrompt,
+	}
 }
 
 func initTools(cfg *configs.Config, workDir string) *tools.Registry {

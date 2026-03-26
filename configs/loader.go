@@ -53,6 +53,11 @@ func ApplyEnvOverrides(cfg *Config) {
 			cfg.Request.MaxTokens = &i
 		}
 	}
+	if v := os.Getenv("MSCLI_MAX_ITERATIONS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Request.MaxIterations = &i
+		}
+	}
 	if v := os.Getenv("MSCLI_TIMEOUT"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			cfg.Model.TimeoutSec = i

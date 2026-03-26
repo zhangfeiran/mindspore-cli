@@ -28,6 +28,7 @@ func TestLoadWithEnv_UsesDefaultsAndEnvOverrides(t *testing.T) {
 	t.Setenv("MSCLI_BASE_URL", "https://env.example")
 	t.Setenv("MSCLI_TEMPERATURE", "0.2")
 	t.Setenv("MSCLI_MAX_TOKENS", "4096")
+	t.Setenv("MSCLI_MAX_ITERATIONS", "7")
 	t.Setenv("MSCLI_CONTEXT_WINDOW", "16000")
 	t.Setenv("MSCLI_UI_ENABLED", "false")
 
@@ -59,6 +60,12 @@ func TestLoadWithEnv_UsesDefaultsAndEnvOverrides(t *testing.T) {
 	}
 	if got, want := *cfg.Request.MaxTokens, 4096; got != want {
 		t.Fatalf("request.max_tokens = %d, want %d", got, want)
+	}
+	if cfg.Request.MaxIterations == nil {
+		t.Fatal("request.max_iterations = nil, want value")
+	}
+	if got, want := *cfg.Request.MaxIterations, 7; got != want {
+		t.Fatalf("request.max_iterations = %d, want %d", got, want)
 	}
 	if got, want := cfg.Context.Window, 16000; got != want {
 		t.Fatalf("context.window = %d, want %d", got, want)
@@ -134,6 +141,16 @@ func TestLoadWithEnv_RejectsUnsupportedProviderFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadWithEnv_RejectsNegativeMaxIterationsFromEnv(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("MSCLI_MAX_ITERATIONS", "-1")
+
+	_, err := LoadWithEnv()
+	if err == nil {
+		t.Fatal("LoadWithEnv() error = nil, want validation error for negative max_iterations")
+	}
+}
+
 func TestLoadWithEnv_IgnoresWhitespaceOnlyModelEnv(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("MSCLI_MODEL", "   ")
@@ -177,6 +194,7 @@ func clearEnv(t *testing.T) {
 		"MSCLI_MODEL",
 		"MSCLI_TEMPERATURE",
 		"MSCLI_MAX_TOKENS",
+		"MSCLI_MAX_ITERATIONS",
 		"MSCLI_TIMEOUT",
 		"MSCLI_CONTEXT_WINDOW",
 		"MSCLI_CONTEXT_RESERVE",

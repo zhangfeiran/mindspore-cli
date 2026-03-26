@@ -163,6 +163,7 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 	}
 	ex.addEvent(NewEvent(EventTaskStarted, fmt.Sprintf("Task: %s", ex.task.Description)))
 
+	completed := false
 	for ex.engine.config.MaxIterations == 0 || ex.iterCount < ex.engine.config.MaxIterations {
 		ex.iterCount++
 		ex.addEvent(NewEvent(EventAgentThinking, ""))
@@ -187,11 +188,14 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 			return ex.events, err
 		}
 		if !continueLoop {
+			completed = true
 			break
 		}
 	}
 
-	if ex.engine.config.MaxIterations > 0 && ex.iterCount >= ex.engine.config.MaxIterations {
+	if completed {
+		ex.addEvent(NewEvent(EventTaskCompleted, "Task completed successfully"))
+	} else if ex.engine.config.MaxIterations > 0 && ex.iterCount >= ex.engine.config.MaxIterations {
 		ex.addEvent(NewEvent(EventTaskFailed, "Task exceeded maximum iterations."))
 	} else {
 		ex.addEvent(NewEvent(EventTaskCompleted, "Task completed successfully"))
