@@ -61,7 +61,7 @@ func (t *GrepTool) Schema() llm.ToolSchema {
 			},
 			"limit": {
 				Type:        "integer",
-				Description: "Maximum number of matches to return (0 means no limit)",
+				Description: "Maximum number of matches to return (defaults to 100, maximum 100)",
 			},
 		},
 		Required: []string{"pattern"},
@@ -127,7 +127,9 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	if len(matches) == 0 {
 		return tools.StringResultWithSummary("No matches found", "0 matches"), nil
 	}
-	matches = sliceWithOffsetLimit(matches, p.Offset, p.Limit)
+	effectiveLimit := normalizeSearchResultLimit(p.Limit)
+	totalMatches := len(matches)
+	matches = sliceWithOffsetLimit(matches, p.Offset, effectiveLimit)
 
 	var lines []string
 	for _, m := range matches {
@@ -137,8 +139,8 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 
 	result := strings.Join(lines, "\n")
 	summary := fmt.Sprintf("%d matches", len(matches))
-	if p.Offset > 0 || p.Limit > 0 {
-		summary = fmt.Sprintf("%d matches (offset=%d, limit=%d)", len(matches), p.Offset, p.Limit)
+	if p.Offset > 0 || p.Limit > 0 || totalMatches != len(matches) {
+		summary = fmt.Sprintf("%d matches (offset=%d, limit=%d)", len(matches), p.Offset, effectiveLimit)
 	}
 
 	return tools.StringResultWithSummary(result, summary), nil

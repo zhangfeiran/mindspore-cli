@@ -3,6 +3,7 @@ package fs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,6 +102,65 @@ func TestGlobToolSupportsOffsetAndLimit(t *testing.T) {
 	}
 }
 
+func TestGlobToolDefaultsLimitTo100(t *testing.T) {
+	workDir := t.TempDir()
+	for i := 0; i < 120; i++ {
+		mustWriteTestFile(t, filepath.Join(workDir, fmt.Sprintf("file%03d.txt", i)), "x")
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"pattern": "*.txt",
+		"path":    ".",
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+
+	result, err := NewGlobTool(workDir).Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute result error = %v, want nil", result.Error)
+	}
+	if got, want := len(strings.Split(result.Content, "\n")), 100; got != want {
+		t.Fatalf("glob returned %d files, want %d", got, want)
+	}
+	if got, want := result.Summary, "100 files (offset=0, limit=100)"; got != want {
+		t.Fatalf("glob summary = %q, want %q", got, want)
+	}
+}
+
+func TestGlobToolCapsLimitAt100(t *testing.T) {
+	workDir := t.TempDir()
+	for i := 0; i < 120; i++ {
+		mustWriteTestFile(t, filepath.Join(workDir, fmt.Sprintf("file%03d.txt", i)), "x")
+	}
+
+	params, err := json.Marshal(map[string]any{
+		"pattern": "*.txt",
+		"path":    ".",
+		"limit":   150,
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+
+	result, err := NewGlobTool(workDir).Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute result error = %v, want nil", result.Error)
+	}
+	if got, want := len(strings.Split(result.Content, "\n")), 100; got != want {
+		t.Fatalf("glob returned %d files, want %d", got, want)
+	}
+	if got, want := result.Summary, "100 files (offset=0, limit=100)"; got != want {
+		t.Fatalf("glob summary = %q, want %q", got, want)
+	}
+}
+
 func TestGrepToolSupportsOffsetAndLimit(t *testing.T) {
 	workDir := t.TempDir()
 	mustWriteTestFile(t, filepath.Join(workDir, "a.txt"), "needle one\nneedle two\n")
@@ -128,6 +188,71 @@ func TestGrepToolSupportsOffsetAndLimit(t *testing.T) {
 		t.Fatalf("grep content = %q, want %q", got, want)
 	}
 	if got, want := result.Summary, "1 matches (offset=2, limit=1)"; got != want {
+		t.Fatalf("grep summary = %q, want %q", got, want)
+	}
+}
+
+func TestGrepToolDefaultsLimitTo100(t *testing.T) {
+	workDir := t.TempDir()
+	var content strings.Builder
+	for i := 0; i < 120; i++ {
+		content.WriteString(fmt.Sprintf("needle %03d\n", i))
+	}
+	mustWriteTestFile(t, filepath.Join(workDir, "matches.txt"), content.String())
+
+	params, err := json.Marshal(map[string]any{
+		"pattern":        "needle",
+		"path":           ".",
+		"case_sensitive": true,
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+
+	result, err := NewGrepTool(workDir).Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute result error = %v, want nil", result.Error)
+	}
+	if got, want := len(strings.Split(result.Content, "\n")), 100; got != want {
+		t.Fatalf("grep returned %d matches, want %d", got, want)
+	}
+	if got, want := result.Summary, "100 matches (offset=0, limit=100)"; got != want {
+		t.Fatalf("grep summary = %q, want %q", got, want)
+	}
+}
+
+func TestGrepToolCapsLimitAt100(t *testing.T) {
+	workDir := t.TempDir()
+	var content strings.Builder
+	for i := 0; i < 120; i++ {
+		content.WriteString(fmt.Sprintf("needle %03d\n", i))
+	}
+	mustWriteTestFile(t, filepath.Join(workDir, "matches.txt"), content.String())
+
+	params, err := json.Marshal(map[string]any{
+		"pattern":        "needle",
+		"path":           ".",
+		"case_sensitive": true,
+		"limit":          150,
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+
+	result, err := NewGrepTool(workDir).Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute result error = %v, want nil", result.Error)
+	}
+	if got, want := len(strings.Split(result.Content, "\n")), 100; got != want {
+		t.Fatalf("grep returned %d matches, want %d", got, want)
+	}
+	if got, want := result.Summary, "100 matches (offset=0, limit=100)"; got != want {
 		t.Fatalf("grep summary = %q, want %q", got, want)
 	}
 }
