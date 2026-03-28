@@ -249,3 +249,101 @@ func TestPlaybackTimelineInsertsThinkingBetweenUserAndLLMResponse(t *testing.T) 
 		t.Fatalf("delta content = %q, want %q", got, "done")
 	}
 }
+
+func TestPlaybackTimelineCapsLongShellReplayToFiveSeconds(t *testing.T) {
+	t0 := time.Date(2026, time.March, 27, 11, 0, 0, 0, time.UTC)
+	t1 := t0.Add(12 * time.Second)
+	t2 := t1.Add(8 * time.Second)
+
+	s := &Session{
+		records: []MessageRecord{
+			{Type: recordTypeToolCall, Timestamp: t0, ToolName: "shell", Arguments: []byte(`{"command":"sleep 12"}`)},
+			{Type: recordTypeToolResult, Timestamp: t1, ToolName: "shell", Content: "done"},
+			{Type: recordTypeUser, Timestamp: t2, Content: "next"},
+		},
+	}
+
+	playback := s.PlaybackTimeline()
+	if len(playback) != 3 {
+		t.Fatalf("playback timeline length = %d, want 3", len(playback))
+	}
+	if got, want := playback[1].Timestamp.Sub(playback[0].Timestamp), 5*time.Second; got != want {
+		t.Fatalf("compressed shell duration = %v, want %v", got, want)
+	}
+	if got, want := playback[2].Timestamp.Sub(playback[1].Timestamp), 8*time.Second; got != want {
+		t.Fatalf("post-shell gap = %v, want %v", got, want)
+	}
+	if playback[0].Event.ReplayWait == nil {
+		t.Fatal("expected replay wait metadata on shell tool call")
+	}
+	if got, want := playback[0].Event.ReplayWait.OriginalDuration, 12*time.Second; got != want {
+		t.Fatalf("shell original wait = %v, want %v", got, want)
+	}
+	if got, want := playback[0].Event.ReplayWait.SimulatedDuration, 5*time.Second; got != want {
+		t.Fatalf("shell simulated wait = %v, want %v", got, want)
+	}
+}
+
+func TestPlaybackTimelineCapsLongAssistantReplayToFiveSeconds(t *testing.T) {
+	t0 := time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(12 * time.Second)
+
+	s := &Session{
+		records: []MessageRecord{
+			{Type: recordTypeUser, Timestamp: t0, Content: "hello"},
+			{Type: recordTypeAssistant, Timestamp: t1, Content: "done"},
+		},
+	}
+
+	playback := s.PlaybackTimeline()
+	if len(playback) != 5 {
+		t.Fatalf("playback timeline length = %d, want 5", len(playback))
+	}
+	if got, want := playback[4].Timestamp.Sub(playback[1].Timestamp), 5*time.Second; got != want {
+		t.Fatalf("compressed assistant duration = %v, want %v", got, want)
+	}
+	if playback[1].Event.ReplayWait == nil {
+		t.Fatal("expected replay wait metadata on thinking event")
+	}
+	if got, want := playback[1].Event.ReplayWait.OriginalDuration, 4*time.Second; got != want {
+		t.Fatalf("assistant original wait = %v, want %v", got, want)
+	}
+	if got, want := playback[1].Event.ReplayWait.SimulatedDuration, scaleReplayDuration(4*time.Second, 12*time.Second, 5*time.Second); got != want {
+		t.Fatalf("assistant simulated wait = %v, want %v", got, want)
+	}
+}
+
+func TestPlaybackTimelineCapsOverlappingToolCallsInSingleFiveSecondWindow(t *testing.T) {
+	t0 := time.Date(2026, time.March, 27, 13, 0, 0, 0, time.UTC)
+	t1 := t0.Add(12 * time.Second)
+	t2 := t0.Add(12500 * time.Millisecond)
+
+	s := &Session{
+		records: []MessageRecord{
+			{Type: recordTypeToolCall, Timestamp: t0, ToolName: "glob", ToolCallID: "call_glob_1", Arguments: []byte(`{"pattern":"**/*.log"}`)},
+			{Type: recordTypeToolCall, Timestamp: t0, ToolName: "glob", ToolCallID: "call_glob_2", Arguments: []byte(`{"pattern":"**/*.py"}`)},
+			{Type: recordTypeToolResult, Timestamp: t1, ToolName: "glob", ToolCallID: "call_glob_1", Content: "a.log"},
+			{Type: recordTypeToolResult, Timestamp: t2, ToolName: "glob", ToolCallID: "call_glob_2", Content: "b.py"},
+		},
+	}
+
+	playback := s.PlaybackTimeline()
+	if len(playback) != 4 {
+		t.Fatalf("playback timeline length = %d, want 4", len(playback))
+	}
+	if got, want := playback[3].Timestamp.Sub(playback[0].Timestamp), 5*time.Second; got != want {
+		t.Fatalf("compressed tool cluster duration = %v, want %v", got, want)
+	}
+	if got, want := playback[3].Timestamp.Sub(playback[2].Timestamp), scaleReplayDuration(500*time.Millisecond, 12500*time.Millisecond, 5*time.Second); got != want {
+		t.Fatalf("compressed result gap = %v, want %v", got, want)
+	}
+	if playback[0].Event.ReplayWait == nil {
+		t.Fatal("expected replay wait metadata on first overlapping tool call")
+	}
+	if got, want := playback[0].Event.ReplayWait.OriginalDuration, 12500*time.Millisecond; got != want {
+		t.Fatalf("tool cluster original wait = %v, want %v", got, want)
+	}
+	if got, want := playback[0].Event.ReplayWait.SimulatedDuration, 5*time.Second; got != want {
+		t.Fatalf("tool cluster simulated wait = %v, want %v", got, want)
+	}
+}

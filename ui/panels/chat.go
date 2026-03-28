@@ -190,7 +190,11 @@ func renderPendingToolStatus(state model.State, m model.Message) string {
 		status = "running..."
 	}
 	if state.WaitKind == model.WaitTool && !state.WaitStartedAt.IsZero() {
-		status += " " + model.FormatWaitDuration(time.Since(state.WaitStartedAt))
+		elapsed := state.WaitElapsed
+		if elapsed <= 0 {
+			elapsed = time.Since(state.WaitStartedAt)
+		}
+		status += " " + model.FormatWaitDuration(elapsed)
 	}
 	return " " + toolPendingStatusStyle.Render(status)
 }

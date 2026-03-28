@@ -76,9 +76,15 @@ func (l *Loader) Names() []string {
 // body wrapped in <skill ...>...</skill> tags with absolute source
 // location metadata.
 func (l *Loader) Load(name string) (string, error) {
+	lookupName := strings.TrimSpace(name)
+	lookupKey := normalizedSkillLookupKey(lookupName)
 	// Iterate in reverse so highest-priority path wins.
 	for i := len(l.paths) - 1; i >= 0; i-- {
-		path := filepath.Join(l.paths[i], name, "SKILL.md")
+		dirName, ok := findSkillDir(l.paths[i], lookupName, lookupKey)
+		if !ok {
+			continue
+		}
+		path := filepath.Join(l.paths[i], dirName, "SKILL.md")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -90,7 +96,7 @@ func (l *Loader) Load(name string) (string, error) {
 		// Use directory name as skill name if frontmatter name is empty.
 		skillName := meta.Name
 		if skillName == "" {
-			skillName = name
+			skillName = dirName
 		}
 		return wrapContent(skillName, absolutePath(path), body), nil
 	}
@@ -141,6 +147,31 @@ func scanDir(dir string) []SkillSummary {
 	return result
 }
 
+func findSkillDir(rootDir, lookupName, lookupKey string) (string, bool) {
+	entries, err := os.ReadDir(rootDir)
+	if err != nil {
+		return "", false
+	}
+
+	var aliasMatch string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dirName := entry.Name()
+		if dirName == lookupName {
+			return dirName, true
+		}
+		if aliasMatch == "" && normalizedSkillLookupKey(dirName) == lookupKey {
+			aliasMatch = dirName
+		}
+	}
+	if aliasMatch != "" {
+		return aliasMatch, true
+	}
+	return "", false
+}
+
 // parseFrontmatter splits a SKILL.md into YAML frontmatter and body.
 // The frontmatter is delimited by lines containing only "---".
 // If no frontmatter is found the entire content is returned as body.
@@ -183,6 +214,10 @@ func absolutePath(path string) string {
 		return path
 	}
 	return abs
+}
+
+func normalizedSkillLookupKey(name string) string {
+	return strings.ReplaceAll(strings.TrimSpace(name), "_", "-")
 }
 
 // wrapContent wraps skill body in <skill ...>...</skill> tags and includes

@@ -146,6 +146,82 @@ func TestLoaderLoad(t *testing.T) {
 	}
 }
 
+func TestLoaderLoadTreatsDashAndUnderscoreAsEquivalent(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "failure-agent")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skillContent := "---\nname: failure-agent\ndescription: Diagnose failures\n---\n\ncollect logs"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := NewLoader(dir)
+	content, err := loader.Load("failure_agent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(content, `name="failure-agent"`) {
+		t.Errorf("expected canonical skill name in wrapped content, got: %s", content)
+	}
+	if !contains(content, "collect logs") {
+		t.Errorf("expected skill body in content, got: %s", content)
+	}
+}
+
+func TestLoaderLoadAliasUsesMatchedDirNameWhenFrontmatterNameMissing(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "setup-agent")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("prepare env"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := NewLoader(dir)
+	content, err := loader.Load("setup_agent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(content, `name="setup-agent"`) {
+		t.Errorf("expected matched directory name in wrapped content, got: %s", content)
+	}
+}
+
+func TestLoaderLoadPrefersExactDirNameOverEquivalentAlias(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		dirName string
+		body    string
+	}{
+		{dirName: "failure-agent", body: "dash body"},
+		{dirName: "failure_agent", body: "underscore body"},
+	} {
+		skillDir := filepath.Join(dir, tc.dirName)
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		skillContent := "---\nname: " + tc.dirName + "\n---\n\n" + tc.body
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	loader := NewLoader(dir)
+	content, err := loader.Load("failure_agent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !contains(content, `name="failure_agent"`) {
+		t.Errorf("expected exact directory match to win, got: %s", content)
+	}
+	if !contains(content, "underscore body") {
+		t.Errorf("expected exact-match skill body, got: %s", content)
+	}
+}
+
 func TestLoaderLoadNotFound(t *testing.T) {
 	loader := NewLoader(t.TempDir())
 	_, err := loader.Load("nonexistent")

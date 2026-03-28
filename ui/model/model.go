@@ -52,14 +52,15 @@ const (
 
 // Message is a single entry in the chat stream.
 type Message struct {
-	Kind      MessageKind
-	Content   string
-	ToolName  string
-	ToolArgs  string
-	Display   DisplayMode
-	Summary   string // shown when collapsed, e.g. "5 matches", "23 files"
-	Pending   bool
-	Streaming bool
+	Kind       MessageKind
+	Content    string
+	ToolName   string
+	ToolCallID string
+	ToolArgs   string
+	Display    DisplayMode
+	Summary    string // shown when collapsed, e.g. "5 matches", "23 files"
+	Pending    bool
+	Streaming  bool
 }
 
 // EventType identifies the kind of UI event.
@@ -106,7 +107,9 @@ type Event struct {
 	Task        string
 	Message     string
 	ToolName    string
+	ToolCallID  string
 	Summary     string
+	ReplayWait  *ReplayWaitData
 	CtxUsed     int
 	CtxMax      int
 	TokensUsed  int
@@ -119,6 +122,12 @@ type Event struct {
 	IssueView   *IssueEventData // non-nil for issue view events only
 	Bug         *bugs.Bug       // reserved for lightweight bug payloads
 	Issue       *issuepkg.Issue // reserved for lightweight issue payloads
+}
+
+// ReplayWaitData lets replay fast-forward the UI timer while using shorter real delays.
+type ReplayWaitData struct {
+	OriginalDuration  time.Duration
+	SimulatedDuration time.Duration
 }
 
 // PermissionPromptData describes a structured permission prompt for interactive UI rendering.
@@ -166,6 +175,7 @@ type State struct {
 	IsThinking       bool      // whether AI is currently thinking
 	WaitKind         WaitKind
 	WaitStartedAt    time.Time
+	WaitElapsed      time.Duration
 	MouseEnabled     bool   // whether mouse mode is enabled (for scrolling)
 	IssueUser        string // logged-in bug server user
 	SkillsNote       string // skills repo status for hint bar
