@@ -67,7 +67,7 @@ if [ "$SKIP_MIRROR" -eq 0 ]; then
   if [ -f "${SCRIPT_DIR}/mirror.conf" ]; then
     source "${SCRIPT_DIR}/mirror.conf"
   fi
-  export MSCODE_MIRROR_HOST MSCODE_MIRROR_USER MSCODE_MIRROR_PORT
+  export MSCODE_MIRROR_HOST MSCODE_MIRROR_USER MSCODE_MIRROR_PORT MSCODE_MIRROR_SSH_KEY
   export MSCODE_MIRROR_ROOT MSCODE_MIRROR_BASE_URL
   "${SCRIPT_DIR}/publish-caddy-mirror.sh" "$VERSION"
 else

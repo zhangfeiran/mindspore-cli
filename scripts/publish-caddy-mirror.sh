@@ -32,6 +32,7 @@ need_cmd python3
 MIRROR_HOST="${MSCODE_MIRROR_HOST:-}"
 MIRROR_USER="${MSCODE_MIRROR_USER:-root}"
 MIRROR_PORT="${MSCODE_MIRROR_PORT:-22}"
+MIRROR_SSH_KEY="${MSCODE_MIRROR_SSH_KEY:-}"
 DIST_DIR="${MSCODE_DIST_DIR:-dist}"
 MIRROR_ROOT="${MSCODE_MIRROR_ROOT:-/opt/downloads/mscode/releases}"
 MIRROR_BASE_URL="${MSCODE_MIRROR_BASE_URL:-}"
@@ -44,6 +45,11 @@ REMOTE_LATEST_LINK="${MSCODE_REMOTE_LATEST_LINK:-1}"
 if [ -z "${MIRROR_HOST}" ]; then
   echo "Error: MSCODE_MIRROR_HOST is required" >&2
   exit 1
+fi
+
+SSH_KEY_OPT=()
+if [ -n "${MIRROR_SSH_KEY}" ] && [ -f "${MIRROR_SSH_KEY}" ]; then
+  SSH_KEY_OPT=(-i "${MIRROR_SSH_KEY}")
 fi
 
 if [ ! -d "${DIST_DIR}" ]; then
@@ -108,7 +114,7 @@ PY
 fi
 
 echo "Publishing ${VERSION} to ${ssh_target}:${remote_target}"
-ssh -p "${MIRROR_PORT}" "${ssh_target}" "mkdir -p '${remote_target}'"
+ssh "${SSH_KEY_OPT[@]}" -p "${MIRROR_PORT}" "${ssh_target}" "mkdir -p '${remote_target}'"
 
 for file in "${required_files[@]}"; do
   local_path="${DIST_DIR}/${file}"
@@ -116,15 +122,15 @@ for file in "${required_files[@]}"; do
     local_path="${manifest_to_upload}"
   fi
   echo "  -> ${file}"
-  scp -P "${MIRROR_PORT}" "${local_path}" "${ssh_target}:${remote_target}/${file}"
+  scp "${SSH_KEY_OPT[@]}" -P "${MIRROR_PORT}" "${local_path}" "${ssh_target}:${remote_target}/${file}"
 done
 
-ssh -p "${MIRROR_PORT}" "${ssh_target}" "chmod -R ${REMOTE_CHMOD} '${remote_target}'"
-scp -P "${MIRROR_PORT}" "${INSTALL_SCRIPT_SOURCE}" "${ssh_target}:${REMOTE_INSTALL_SCRIPT_PATH}"
-ssh -p "${MIRROR_PORT}" "${ssh_target}" "chmod ${REMOTE_CHMOD%% *} '${REMOTE_INSTALL_SCRIPT_PATH}'"
+ssh "${SSH_KEY_OPT[@]}" -p "${MIRROR_PORT}" "${ssh_target}" "chmod -R ${REMOTE_CHMOD} '${remote_target}'"
+scp "${SSH_KEY_OPT[@]}" -P "${MIRROR_PORT}" "${INSTALL_SCRIPT_SOURCE}" "${ssh_target}:${REMOTE_INSTALL_SCRIPT_PATH}"
+ssh "${SSH_KEY_OPT[@]}" -p "${MIRROR_PORT}" "${ssh_target}" "chmod ${REMOTE_CHMOD%% *} '${REMOTE_INSTALL_SCRIPT_PATH}'"
 
 if [ "${REMOTE_LATEST_LINK}" = "1" ]; then
-  ssh -p "${MIRROR_PORT}" "${ssh_target}" "ln -sfn '${remote_target}' '${remote_latest}' && chmod -h ${REMOTE_CHMOD%% *} '${remote_latest}' 2>/dev/null || true"
+  ssh "${SSH_KEY_OPT[@]}" -p "${MIRROR_PORT}" "${ssh_target}" "ln -sfn '${remote_target}' '${remote_latest}' && chmod -h ${REMOTE_CHMOD%% *} '${remote_latest}' 2>/dev/null || true"
 fi
 
 echo ""
