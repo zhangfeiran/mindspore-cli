@@ -9,12 +9,13 @@ import (
 	"github.com/vigo999/mindspore-code/ui/model"
 )
 
+// panelTitleStyle and panelBodyStyle are layout-only (not themed).
+// panelStubStyle and runBarStyle are populated by InitStyles() in styles.go.
 var (
 	panelTitleStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1)
 	panelBodyStyle  = lipgloss.NewStyle().Padding(0, 1)
-	panelStubStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Padding(0, 1)
-
-	runBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Padding(0, 1)
+	panelStubStyle  lipgloss.Style
+	runBarStyle     lipgloss.Style
 )
 
 // ── Workspace status bar ────────────────────────────────────

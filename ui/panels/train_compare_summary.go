@@ -7,12 +7,13 @@ import (
 	"github.com/vigo999/mindspore-code/ui/model"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	cmpLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	cmpGoodStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Bold(true)
-	cmpBadStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	cmpWarnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	cmpNeutStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	cmpLabelStyle lipgloss.Style
+	cmpGoodStyle  lipgloss.Style
+	cmpBadStyle   lipgloss.Style
+	cmpWarnStyle  lipgloss.Style
+	cmpNeutStyle  lipgloss.Style
 )
 
 func RenderCompareSummary(tv model.TrainWorkspaceState) []string {

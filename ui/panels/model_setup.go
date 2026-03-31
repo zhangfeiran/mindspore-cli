@@ -7,19 +7,17 @@ import (
 	"github.com/vigo999/mindspore-code/ui/model"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	setupTitleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Align(lipgloss.Center)
-	setupNormalStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-	setupSelectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	setupDisabledStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	setupHintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
-	setupErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	setupLabelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	setupBadgeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	setupBorderStyle   = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("12")).
-				Padding(0, 2)
+	setupTitleStyle    lipgloss.Style
+	setupNormalStyle   lipgloss.Style
+	setupSelectedStyle lipgloss.Style
+	setupDisabledStyle lipgloss.Style
+	setupHintStyle     lipgloss.Style
+	setupErrorStyle    lipgloss.Style
+	setupLabelStyle    lipgloss.Style
+	setupBadgeStyle    lipgloss.Style
+	setupBorderStyle   lipgloss.Style
 )
 
 // RenderSetupPopup renders the multi-step model setup popup.
@@ -140,9 +138,10 @@ func renderTokenInput(popup *model.SetupPopup) string {
 	return setupBorderStyle.Render(strings.Join(lines, "\n"))
 }
 
+// Style vars populated by InitStyles() in styles.go.
 var (
-	tokenCursorStyle = lipgloss.NewStyle().Background(lipgloss.Color("252")).Foreground(lipgloss.Color("0"))
-	tokenTextStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	tokenCursorStyle lipgloss.Style
+	tokenTextStyle   lipgloss.Style
 )
 
 func renderTokenField(token string) string {

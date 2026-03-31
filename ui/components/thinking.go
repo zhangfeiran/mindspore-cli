@@ -13,12 +13,9 @@ var thinkingSpinnerFrames = []string{
 	"⣷", "⣯", "⣟", "⣿", "⣻", "⣽", "⣾", "⣷",
 }
 
-var thinkingStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("205")).
-	Italic(true)
-
-var thinkingSpinnerStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("212"))
+// Style vars are populated by InitStyles() in styles.go.
+var thinkingStyle lipgloss.Style
+var thinkingSpinnerStyle lipgloss.Style
 
 // ThinkingSpinner shows a "⣻ Thinking..." animated indicator
 type ThinkingSpinner struct {

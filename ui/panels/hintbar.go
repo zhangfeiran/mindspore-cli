@@ -9,22 +9,13 @@ import (
 	"github.com/vigo999/mindspore-code/ui/model"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	hintDividerStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("238"))
-
-	hintTextStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			PaddingLeft(1)
-
-	hintKeyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
-
-	hintDescStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
-
-	hintSepStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
+	hintDividerStyle lipgloss.Style
+	hintTextStyle    lipgloss.Style
+	hintKeyStyle     lipgloss.Style
+	hintDescStyle    lipgloss.Style
+	hintSepStyle     lipgloss.Style
 )
 
 type hint struct {

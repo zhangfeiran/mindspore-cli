@@ -9,32 +9,16 @@ import (
 	"github.com/vigo999/mindspore-code/ui/model"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	topBarStyle = lipgloss.NewStyle().
-			Padding(0, 1)
-
-	brandStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")).
-			Bold(true)
-
-	infoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("117"))
-
-	sepStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("117"))
-
-	dividerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("117"))
-
-	bannerLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("117"))
-
-	bannerValueStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("117"))
-
-	bannerDimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("117")).
-			Italic(true)
+	topBarStyle      = lipgloss.NewStyle().Padding(0, 1) // layout-only, not themed
+	brandStyle       lipgloss.Style
+	infoStyle        lipgloss.Style
+	sepStyle         lipgloss.Style
+	dividerStyle     lipgloss.Style
+	bannerLabelStyle lipgloss.Style
+	bannerValueStyle lipgloss.Style
+	bannerDimStyle   lipgloss.Style
 )
 
 // RenderTopBar renders the top status bar.

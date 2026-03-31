@@ -6,22 +6,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	BoxBorderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
-	TitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("15"))
-	LabelStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
-	ValueStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-	StatusOpenStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("114"))
-	StatusDoingStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("214"))
-	ActivityStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
+	BoxBorderStyle   lipgloss.Style
+	TitleStyle       lipgloss.Style
+	LabelStyle       lipgloss.Style
+	ValueStyle       lipgloss.Style
+	StatusOpenStyle  lipgloss.Style
+	StatusDoingStyle lipgloss.Style
+	ActivityStyle    lipgloss.Style
 )
 
 func Box(lines []string) string {

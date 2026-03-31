@@ -8,7 +8,8 @@ import (
 	issuepkg "github.com/vigo999/mindspore-code/internal/issues"
 )
 
-var issueRowSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("237"))
+// issueRowSelectedStyle is populated by InitStyles() in styles.go.
+var issueRowSelectedStyle lipgloss.Style
 
 func IssueIndex(items []issuepkg.Issue, cursor, width, rows int) string {
 	if rows < 1 {

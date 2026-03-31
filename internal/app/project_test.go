@@ -353,3 +353,101 @@ func TestHandleCommandProjectRemoveDeletesTask(t *testing.T) {
 		t.Fatalf("expected keep task to remain, got: %+v", store.tasks[0])
 	}
 }
+
+func TestRenderTaskLines_TagsColumn(t *testing.T) {
+	tasks := []projectTask{
+		{ID: "1", Title: "add startup detection", Status: "done", Progress: 100, Owner: "alice", Tags: "startup,config"},
+		{ID: "2", Title: "build setup popup", Status: "doing", Progress: 60, Owner: "bob", Tags: "ui,model"},
+	}
+	lines := renderTaskLines(tasks)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	for i, task := range tasks {
+		if !strings.Contains(lines[i], task.Tags) {
+			t.Errorf("line %d: expected tags %q, got:\n%s", i, task.Tags, lines[i])
+		}
+		if !strings.Contains(lines[i], task.Title) {
+			t.Errorf("line %d: expected title %q, got:\n%s", i, task.Title, lines[i])
+		}
+	}
+}
+
+func TestRenderTaskLines_EmptyTags(t *testing.T) {
+	tasks := []projectTask{
+		{ID: "1", Title: "task with no tags", Status: "todo", Progress: 0, Owner: "alice"},
+		{ID: "2", Title: "another task", Status: "doing", Progress: 50, Owner: "bob"},
+	}
+	lines := renderTaskLines(tasks)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	for i, task := range tasks {
+		if !strings.Contains(lines[i], task.Title) {
+			t.Errorf("line %d: expected title %q, got:\n%s", i, task.Title, lines[i])
+		}
+		if !strings.Contains(lines[i], task.Owner) {
+			t.Errorf("line %d: expected owner %q, got:\n%s", i, task.Owner, lines[i])
+		}
+	}
+}
+
+func TestRenderMilestoneLines_TagsColumn(t *testing.T) {
+	milestones := []projectTask{
+		{Title: "v1.0 release", Progress: 80, Tags: "release,stable"},
+		{Title: "beta launch", Progress: 50, Tags: "beta"},
+	}
+	lines := renderMilestoneLines(milestones)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	for i, m := range milestones {
+		if !strings.Contains(lines[i], m.Tags) {
+			t.Errorf("line %d: expected tags %q, got:\n%s", i, m.Tags, lines[i])
+		}
+		if !strings.Contains(lines[i], m.Title) {
+			t.Errorf("line %d: expected title %q, got:\n%s", i, m.Title, lines[i])
+		}
+	}
+}
+
+func TestRenderTaskLines_LongTitleTruncated(t *testing.T) {
+	longTitle := strings.Repeat("a", 120)
+	tasks := []projectTask{
+		{ID: "1", Title: longTitle, Status: "doing", Progress: 50, Owner: "alice", Tags: "long"},
+	}
+	lines := renderTaskLines(tasks)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(lines))
+	}
+	if strings.Contains(lines[0], longTitle) {
+		t.Errorf("expected title to be truncated, got full title in:\n%s", lines[0])
+	}
+	if !strings.Contains(lines[0], "...") {
+		t.Errorf("expected truncation marker '...', got:\n%s", lines[0])
+	}
+}
+
+func TestTruncateStr(t *testing.T) {
+	tests := []struct {
+		input string
+		max   int
+		want  string
+	}{
+		{"short", 10, "short"},
+		{"exactly ten", 11, "exactly ten"},
+		{"this is a long string", 10, "this is..."},
+		{"abc", 3, "abc"},
+		{"abcd", 3, "abc"},
+		{"", 5, ""},
+		{"hello", 0, ""},
+		{"hello", -1, ""},
+		{"hello", 4, "h..."},
+	}
+	for _, tt := range tests {
+		got := truncateStr(tt.input, tt.max)
+		if got != tt.want {
+			t.Errorf("truncateStr(%q, %d) = %q, want %q", tt.input, tt.max, got, tt.want)
+		}
+	}
+}

@@ -9,9 +9,10 @@ import (
 	"github.com/vigo999/mindspore-code/internal/bugs"
 )
 
-var statusClosedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-var bugRowSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("237"))
-var bugHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+// Style vars are populated by InitStyles() in styles.go.
+var statusClosedStyle lipgloss.Style
+var bugRowSelectedStyle lipgloss.Style
+var bugHeaderStyle lipgloss.Style
 var bugDetailLabelStyle = lipgloss.NewStyle()
 var bugDetailValueStyle = lipgloss.NewStyle()
 var bugDetailTitleStyle = lipgloss.NewStyle()

@@ -8,108 +8,31 @@ import (
 	"github.com/vigo999/mindspore-code/ui/model"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	trainTitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("214"))
-
-	sectionHeaderStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("252")).
-				Background(lipgloss.Color("236")).
-				Padding(0, 1)
-
-	phaseBadgeSetup = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("16")).
-			Background(lipgloss.Color("214")).
-			Padding(0, 1)
-
-	phaseBadgeReady = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("16")).
-			Background(lipgloss.Color("114")).
-			Padding(0, 1)
-
-	phaseBadgeRunning = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("39")).
-				Padding(0, 1)
-
-	phaseBadgeCompleted = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("114")).
-				Padding(0, 1)
-
-	phaseBadgeFailed = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("255")).
-				Background(lipgloss.Color("196")).
-				Padding(0, 1)
-
-	phaseBadgeStopped = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("240")).
-				Padding(0, 1)
-
-	phaseBadgeDrift = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("255")).
-			Background(lipgloss.Color("196")).
-			Padding(0, 1)
-
-	phaseBadgeAnalyzing = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("214")).
-				Padding(0, 1)
-
-	phaseBadgeRerunning = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("69")).
-				Padding(0, 1)
-
-	checkPassedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
-	checkFailedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	checkRunningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	checkPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	checkDetailStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
-	trainDividerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
-	metricLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
-	actionNormalStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252")).
-				Background(lipgloss.Color("238")).
-				Padding(0, 2)
-
-	actionFocusedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("39")).
-				Bold(true).
-				Padding(0, 2)
-
-	actionDangerStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("255")).
-				Background(lipgloss.Color("196")).
-				Bold(true).
-				Padding(0, 2)
-
-	actionDangerFocusedStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("16")).
-					Background(lipgloss.Color("203")).
-					Bold(true).
-					Padding(0, 2)
-
-	actionDisabledStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("238")).
-				Background(lipgloss.Color("234")).
-				Strikethrough(true).
-				Padding(0, 2)
+	trainTitleStyle         lipgloss.Style
+	sectionHeaderStyle      lipgloss.Style
+	phaseBadgeSetup         lipgloss.Style
+	phaseBadgeReady         lipgloss.Style
+	phaseBadgeRunning       lipgloss.Style
+	phaseBadgeCompleted     lipgloss.Style
+	phaseBadgeFailed        lipgloss.Style
+	phaseBadgeStopped       lipgloss.Style
+	phaseBadgeDrift         lipgloss.Style
+	phaseBadgeAnalyzing     lipgloss.Style
+	phaseBadgeRerunning     lipgloss.Style
+	checkPassedStyle        lipgloss.Style
+	checkFailedStyle        lipgloss.Style
+	checkRunningStyle       lipgloss.Style
+	checkPendingStyle       lipgloss.Style
+	checkDetailStyle        lipgloss.Style
+	trainDividerStyle       lipgloss.Style
+	metricLabelStyle        lipgloss.Style
+	actionNormalStyle       lipgloss.Style
+	actionFocusedStyle      lipgloss.Style
+	actionDangerStyle       lipgloss.Style
+	actionDangerFocusedStyle lipgloss.Style
+	actionDisabledStyle     lipgloss.Style
 )
 
 func RenderTrainSidebar(tv model.TrainWorkspaceState, width, height int) string {

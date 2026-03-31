@@ -17,7 +17,11 @@ import (
 	"github.com/vigo999/mindspore-code/integrations/llm"
 	"github.com/vigo999/mindspore-code/internal/version"
 	"github.com/vigo999/mindspore-code/ui"
+	"github.com/vigo999/mindspore-code/ui/components"
 	"github.com/vigo999/mindspore-code/ui/model"
+	"github.com/vigo999/mindspore-code/ui/panels"
+	"github.com/vigo999/mindspore-code/ui/render"
+	"github.com/vigo999/mindspore-code/ui/theme"
 )
 
 const provideAPIKeyFirstMsg = "LLM unavailable: provide api key first, or /login and switch to free model."
@@ -123,6 +127,14 @@ func (a *Application) run() error {
 }
 
 func (a *Application) runReal() error {
+	if err := theme.Apply(a.Config.UI.Theme); err != nil {
+		return fmt.Errorf("theme: %w", err)
+	}
+	panels.InitStyles()
+	components.InitStyles()
+	render.InitStyles()
+	ui.InitStyles()
+
 	userCh := make(chan string, 8)
 	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.Window)
 	if a.replayOnly {

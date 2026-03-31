@@ -8,43 +8,17 @@ import (
 	"github.com/vigo999/mindspore-code/ui/model"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
+// laneMetricValue is not themed (color set at call sites).
 var (
-	laneHeaderStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("252"))
-
-	laneSubStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
-
-	laneBadgeRunning = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("39")).
-				Padding(0, 1)
-
-	laneBadgeCompleted = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("114")).
-				Padding(0, 1)
-
-	laneBadgeFailed = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("255")).
-			Background(lipgloss.Color("196")).
-			Padding(0, 1)
-
-	laneBadgePending = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("240")).
-				Padding(0, 1)
-
-	laneMetricLabel = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
-
-	laneMetricValue = lipgloss.NewStyle().
-			Bold(true)
+	laneHeaderStyle    lipgloss.Style
+	laneSubStyle       lipgloss.Style
+	laneBadgeRunning   lipgloss.Style
+	laneBadgeCompleted lipgloss.Style
+	laneBadgeFailed    lipgloss.Style
+	laneBadgePending   lipgloss.Style
+	laneMetricLabel    lipgloss.Style
+	laneMetricValue    = lipgloss.NewStyle().Bold(true)
 )
 
 // RenderLanePanel remains as a reusable per-run renderer for optional compare views.

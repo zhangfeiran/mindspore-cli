@@ -14,12 +14,14 @@ import (
 	"github.com/vigo999/mindspore-code/ui/slash"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
+// composerStyle is layout-only (not themed).
 var (
-	sugCmdStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	sugDescStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	sugSelCmdStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
-	sugSelDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
-	separatorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	sugCmdStyle     lipgloss.Style
+	sugDescStyle    lipgloss.Style
+	sugSelCmdStyle  lipgloss.Style
+	sugSelDescStyle lipgloss.Style
+	separatorStyle  lipgloss.Style
 	composerStyle   = lipgloss.NewStyle().PaddingLeft(2)
 )
 

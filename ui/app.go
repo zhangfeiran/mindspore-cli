@@ -9,6 +9,7 @@ import (
 	"github.com/vigo999/mindspore-code/ui/components"
 	"github.com/vigo999/mindspore-code/ui/model"
 	"github.com/vigo999/mindspore-code/ui/panels"
+	"github.com/vigo999/mindspore-code/ui/theme"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -41,12 +42,13 @@ const (
 	modelSetupToken                 = "__model_setup"
 )
 
+// Style vars are populated by InitStyles() below.
 var (
-	chatLineStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
-	trainErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	trainSuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("114"))
-	trainWorkingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	queueBannerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).PaddingLeft(2)
+	chatLineStyle     lipgloss.Style
+	trainErrorStyle   lipgloss.Style
+	trainSuccessStyle lipgloss.Style
+	trainWorkingStyle lipgloss.Style
+	queueBannerStyle  lipgloss.Style
 )
 
 // agentMsg formats an agent message with a status marker and fixed-width source prefix.
@@ -68,13 +70,29 @@ func agentMsg(source, msg string, done bool) string {
 }
 
 var (
-	diffAddStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green
-	diffRemoveStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // red
-	diffHunkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))  // blue
-	diffFileStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
-	diffContextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244")) // dim
-	diffSummaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	diffAddStyle     lipgloss.Style
+	diffRemoveStyle  lipgloss.Style
+	diffHunkStyle    lipgloss.Style
+	diffFileStyle    lipgloss.Style
+	diffContextStyle lipgloss.Style
+	diffSummaryStyle lipgloss.Style
 )
+
+// InitStyles rebuilds the package-level style vars from theme.Current.
+func InitStyles() {
+	t := theme.Current
+	chatLineStyle = lipgloss.NewStyle().Foreground(t.SelectionBG)
+	trainErrorStyle = lipgloss.NewStyle().Foreground(t.Error)
+	trainSuccessStyle = lipgloss.NewStyle().Foreground(t.Success)
+	trainWorkingStyle = lipgloss.NewStyle().Foreground(t.Warning)
+	queueBannerStyle = lipgloss.NewStyle().Foreground(t.Warning).PaddingLeft(2)
+	diffAddStyle = lipgloss.NewStyle().Foreground(t.Success)
+	diffRemoveStyle = lipgloss.NewStyle().Foreground(t.Error)
+	diffHunkStyle = lipgloss.NewStyle().Foreground(t.Accent)
+	diffFileStyle = lipgloss.NewStyle().Foreground(t.Warning).Bold(true)
+	diffContextStyle = lipgloss.NewStyle().Foreground(t.TextSecondary)
+	diffSummaryStyle = lipgloss.NewStyle().Foreground(t.TextPrimary).Bold(true)
+}
 
 // formatDiffLine colorizes a single diff line for the agent panel.
 func formatDiffLine(line string) string {

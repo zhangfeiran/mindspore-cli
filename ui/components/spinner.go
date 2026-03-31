@@ -6,7 +6,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+// spinnerStyle is populated by InitStyles() in styles.go.
+var spinnerStyle lipgloss.Style
 
 // Spinner wraps the bubbles spinner for the thinking indicator.
 type Spinner struct {

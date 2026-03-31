@@ -6,31 +6,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	logTitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("252")).
-			Background(lipgloss.Color("236")).
-			Padding(0, 1)
-
-	logLineStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
-
-	logMetricLineStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("39"))
-
-	logErrorLineStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196")).
-				Bold(true)
-
-	logHighlightStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("114"))
-
-	logTimestampStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
-
-	logBorderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("236"))
+	logTitleStyle      lipgloss.Style
+	logLineStyle       lipgloss.Style
+	logMetricLineStyle lipgloss.Style
+	logErrorLineStyle  lipgloss.Style
+	logHighlightStyle  lipgloss.Style
+	logTimestampStyle  lipgloss.Style
+	logBorderStyle     lipgloss.Style
 )
 
 // RenderLaneLogs renders log lines for a lane or general log output.

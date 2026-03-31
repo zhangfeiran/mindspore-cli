@@ -10,91 +10,35 @@ import (
 	// uirender "github.com/vigo999/mindspore-code/ui/render"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	userStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39")).
-			Bold(true)
-
-	agentStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-
-	thinkingStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("205")).
-			Italic(true)
-
-	// expanded tool block
-	toolBorderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	toolHeaderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
-			Bold(true)
-
-	toolContentStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("250")).
-				PaddingLeft(2)
-
-	// collapsed tool (dim, single line)
-	collapsedIconStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
-
-	collapsedNameStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244"))
-
-	collapsedTitleStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252")).
-				Bold(true)
-
-	collapsedSummaryStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240")).
-				Italic(true)
-
-	// error tool block
-	errorBorderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196"))
-
-	errorHeaderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196")).
-				Bold(true)
-
-	errorContentStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("203")).
-				PaddingLeft(2)
-
-	// edit/write diff styles
-	diffAddStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("114"))
-
-	diffRemoveStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("203"))
-
-	diffNeutralStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("250")).
-				PaddingLeft(2)
-
-	toolPendingDotStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
-	toolSuccessDotStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("114"))
-	toolWarningDotStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("214"))
-	toolErrorDotStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196"))
-	toolCallLineStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252"))
-	toolPendingStatusStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244")).
-				Italic(true)
-	toolResultPrefixStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244"))
-	toolResultSummaryStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("250"))
-	toolResultDetailStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245"))
-	toolResultWarningStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("214"))
-	toolResultErrorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("203"))
+	userStyle             lipgloss.Style
+	agentStyle            lipgloss.Style
+	thinkingStyle         lipgloss.Style
+	toolBorderStyle       lipgloss.Style
+	toolHeaderStyle       lipgloss.Style
+	toolContentStyle      lipgloss.Style
+	collapsedIconStyle    lipgloss.Style
+	collapsedNameStyle    lipgloss.Style
+	collapsedTitleStyle   lipgloss.Style
+	collapsedSummaryStyle lipgloss.Style
+	errorBorderStyle      lipgloss.Style
+	errorHeaderStyle      lipgloss.Style
+	errorContentStyle     lipgloss.Style
+	diffAddStyle          lipgloss.Style
+	diffRemoveStyle       lipgloss.Style
+	diffNeutralStyle      lipgloss.Style
+	toolPendingDotStyle   lipgloss.Style
+	toolSuccessDotStyle   lipgloss.Style
+	toolWarningDotStyle   lipgloss.Style
+	toolErrorDotStyle     lipgloss.Style
+	toolCallLineStyle     lipgloss.Style
+	toolPendingStatusStyle lipgloss.Style
+	toolResultPrefixStyle  lipgloss.Style
+	toolResultSummaryStyle lipgloss.Style
+	toolResultDetailStyle  lipgloss.Style
+	toolResultWarningStyle lipgloss.Style
+	toolResultErrorStyle   lipgloss.Style
 )
 
 // RenderMessages converts messages into styled text for the viewport.

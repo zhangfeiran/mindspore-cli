@@ -6,18 +6,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	bootMessageBaseStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("241")).
-				Bold(true)
-
-	bootMessageGlowStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("250")).
-				Bold(true)
-
-	bootMessageHotStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("255")).
-				Bold(true)
+	bootMessageBaseStyle lipgloss.Style
+	bootMessageGlowStyle lipgloss.Style
+	bootMessageHotStyle  lipgloss.Style
 )
 
 // RenderBootScreen renders a centered splash screen shown before the TUI opens.

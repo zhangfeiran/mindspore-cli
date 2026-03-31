@@ -8,9 +8,10 @@ import (
 	"github.com/vigo999/mindspore-code/ui/model"
 )
 
+// Style vars are populated by InitStyles() in styles.go.
 var (
-	issueKindStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	issueSummaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	issueKindStyle    lipgloss.Style
+	issueSummaryStyle lipgloss.Style
 )
 
 func RenderTrainIssue(tv model.TrainWorkspaceState, width int) []string {

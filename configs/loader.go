@@ -70,6 +70,9 @@ func ApplyEnvOverrides(cfg *Config) {
 			cfg.UI.Enabled = b
 		}
 	}
+	if v := os.Getenv("MSCODE_THEME"); v != "" {
+		cfg.UI.Theme = v
+	}
 
 	// Permissions
 	if v := os.Getenv("MSCODE_PERMISSIONS_SKIP"); v != "" {

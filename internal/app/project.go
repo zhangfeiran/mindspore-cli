@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	projectpkg "github.com/vigo999/mindspore-code/internal/project"
 	"github.com/vigo999/mindspore-code/ui/model"
+	"github.com/vigo999/mindspore-code/ui/theme"
 )
 
 var runProjectGit = func(workDir string, args ...string) (string, error) {
@@ -230,7 +231,7 @@ func (a *Application) emitProjectTasksByTag(tag string) {
 	if tag != "" {
 		header = "[ TASKS: " + tag + " ]"
 	}
-	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(theme.Current.TextPrimary)
 	lines := []string{sectionHeader.Render(header)}
 	lines = append(lines, renderTaskLines(tasks)...)
 	a.EventCh <- model.Event{Type: model.AgentReply, Message: strings.Join(lines, "\n")}
@@ -837,7 +838,7 @@ func progressBarStyled(pct, width int, filledColor, emptyColor string) string {
 }
 
 func renderProjectCard(card projectCard) string {
-	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	sectionHeader := lipgloss.NewStyle().Bold(true).Foreground(theme.Current.TextPrimary)
 
 	sections := []string{
 		sectionHeader.Render("[ OVERVIEW ]"),
@@ -857,21 +858,40 @@ func renderMilestoneLines(milestones []projectTask) []string {
 	if len(milestones) == 0 {
 		return []string{"  (none)"}
 	}
-	magenta := lipgloss.NewStyle().Foreground(lipgloss.Color("201"))
-	titleWidth := 0
+	magenta := lipgloss.NewStyle().Foreground(lipgloss.Color("201")) // milestone accent, not in semantic palette
+	tagsWidth := 0
 	for _, m := range milestones {
-		if l := len(m.Title); l > titleWidth {
-			titleWidth = l
+		if l := len(m.Tags); l > tagsWidth {
+			tagsWidth = l
 		}
 	}
+	if tagsWidth > 20 {
+		tagsWidth = 20
+	}
+
+	// Fixed part: "  [bar] pct%  tags  " → 2+12+1+4 + padding
+	fixedWidth := 2 + 12 + 1 + 4
+	if tagsWidth > 0 {
+		fixedWidth += 2 + tagsWidth
+	}
+	titleWidth := projectColumnWidth - fixedWidth
 	if titleWidth < 12 {
 		titleWidth = 12
 	}
+
 	lines := make([]string, 0, len(milestones))
 	for _, m := range milestones {
 		bar := progressBar(m.Progress, 10)
-		line := fmt.Sprintf("  %-*s [%s] %3d%%",
-			titleWidth, m.Title, bar, m.Progress)
+		title := truncateStr(m.Title, titleWidth)
+		tags := truncateStr(m.Tags, tagsWidth)
+		var line string
+		if tagsWidth > 0 {
+			line = fmt.Sprintf("  [%s] %3d%%  %-*s  %s",
+				bar, m.Progress, tagsWidth, tags, title)
+		} else {
+			line = fmt.Sprintf("  [%s] %3d%%  %s",
+				bar, m.Progress, title)
+		}
 		lines = append(lines, magenta.Render(line))
 	}
 	return lines
@@ -885,23 +905,32 @@ func renderTaskLines(tasks []projectTask) []string {
 	sort.SliceStable(tasks, func(i, j int) bool {
 		return tasks[i].Progress < tasks[j].Progress
 	})
-	yellow := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	green := lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
+	yellow := lipgloss.NewStyle().Foreground(theme.Current.Warning)
+	green := lipgloss.NewStyle().Foreground(theme.Current.Success)
 
-	titleWidth := 0
 	ownerWidth := 0
-	dueWidth := 0
+	tagsWidth := 0
 	for _, t := range tasks {
-		if l := len(t.Title); l > titleWidth {
-			titleWidth = l
-		}
 		if l := len(t.Owner); l > ownerWidth {
 			ownerWidth = l
 		}
-		if l := len(t.Due); l > dueWidth {
-			dueWidth = l
+		if l := len(t.Tags); l > tagsWidth {
+			tagsWidth = l
 		}
 	}
+	if ownerWidth < 5 {
+		ownerWidth = 5
+	}
+	if tagsWidth > 20 {
+		tagsWidth = 20
+	}
+
+	// Fixed columns: "  #ID  marker  [bar] pct%  owner  tags  "
+	fixedWidth := 2 + 5 + 1 + 1 + 12 + 1 + 4 + 3 + ownerWidth
+	if tagsWidth > 0 {
+		fixedWidth += 2 + tagsWidth
+	}
+	titleWidth := projectColumnWidth - fixedWidth
 	if titleWidth < 12 {
 		titleWidth = 12
 	}
@@ -910,20 +939,18 @@ func renderTaskLines(tasks []projectTask) []string {
 	for _, task := range tasks {
 		marker := taskStatusMarker(task.Status, task.Progress)
 		bar := progressBar(task.Progress, 10)
-
-		coloredPart := fmt.Sprintf("#%-3s %s %-*s   [%s] %3d%%",
-			task.ID, marker, titleWidth, task.Title, bar, task.Progress)
+		title := truncateStr(task.Title, titleWidth)
+		tags := truncateStr(task.Tags, tagsWidth)
 
 		owner := fmt.Sprintf("%-*s", ownerWidth, task.Owner)
-		due := fmt.Sprintf("%-*s", dueWidth, task.Due)
-		dimPart := "   " + owner + "   " + due
-		if task.Tags != "" {
-			tagParts := strings.Split(task.Tags, ",")
-			for i, t := range tagParts {
-				tagParts[i] = "[" + strings.TrimSpace(t) + "]"
-			}
-			dimPart += "  " + strings.Join(tagParts, " ")
+		var tagsCol string
+		if tagsWidth > 0 {
+			tagsCol = fmt.Sprintf("  %-*s", tagsWidth, tags)
 		}
+
+		coloredPart := fmt.Sprintf("#%-3s %s [%s] %3d%%",
+			task.ID, marker, bar, task.Progress)
+		dimPart := "  " + owner + tagsCol + "  " + title
 
 		switch {
 		case task.Progress >= 100 || normalizeTaskStatus(task.Status) == "done":
@@ -935,6 +962,22 @@ func renderTaskLines(tasks []projectTask) []string {
 		}
 	}
 	return lines
+}
+
+const projectColumnWidth = 100
+
+func truncateStr(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxWidth {
+		return s
+	}
+	if maxWidth <= 3 {
+		return string(runes[:maxWidth])
+	}
+	return string(runes[:maxWidth-3]) + "..."
 }
 
 func renderSupportLines(items []string) []string {
