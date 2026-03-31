@@ -147,17 +147,19 @@ const (
 
 // App is the TUI root model.
 type App struct {
-	state         model.State
-	viewport      components.Viewport
-	input         components.TextInput
-	thinking      components.ThinkingSpinner
-	width         int
-	height        int
-	eventCh       <-chan model.Event
-	userCh        chan<- string // sends user input to the engine bridge
-	lastInterrupt time.Time     // track last ctrl+c for double-press exit
-	mouseEnabled  bool
-	replayWait    *model.ReplayWaitData
+	state                model.State
+	viewport             components.Viewport
+	input                components.TextInput
+	thinking             components.ThinkingSpinner
+	width                int
+	height               int
+	eventCh              <-chan model.Event
+	userCh               chan<- string // sends user input to the engine bridge
+	lastInterrupt        time.Time     // track last ctrl+c for double-press exit
+	mouseEnabled         bool
+	replayWait           *model.ReplayWaitData
+	inlineMode           bool
+	inlineModalAltScreen bool
 
 	// Train mode
 	trainView     model.TrainViewState
@@ -195,6 +197,12 @@ func NewReplay(ch <-chan model.Event, userCh chan<- string, version, workDir, re
 	return app
 }
 
+// WithInlineMode disables fullscreen chrome so the TUI renders into the normal buffer.
+func (a App) WithInlineMode() App {
+	a.inlineMode = true
+	return a
+}
+
 func (a App) waitForEvent() tea.Msg {
 	ev, ok := <-a.eventCh
 	if !ok {
@@ -223,14 +231,42 @@ func (a App) Init() tea.Cmd {
 }
 
 func (a App) chatHeight() int {
-	h := a.height - topBarHeight - chatLineHeight - hintBarHeight - a.input.Height()
+	h := a.height - a.persistentTopBarHeight() - chatLineHeight - hintBarHeight - a.input.Height()
 	h -= a.activeHUDHeight()
 	h -= a.queueBannerHeight()
-	h -= bottomSafePadding
+	h -= a.bottomPaddingHeight()
 	if h < 1 {
 		return 1
 	}
 	return h
+}
+
+func (a App) desiredChatHeight(contentLines int) int {
+	maxHeight := a.chatHeight()
+	if !a.inlineMode {
+		return maxHeight
+	}
+	if contentLines < 1 {
+		contentLines = 1
+	}
+	if contentLines > maxHeight {
+		return maxHeight
+	}
+	return contentLines
+}
+
+func (a App) persistentTopBarHeight() int {
+	if a.inlineMode {
+		return 0
+	}
+	return topBarHeight
+}
+
+func (a App) bottomPaddingHeight() int {
+	if a.inlineMode {
+		return 0
+	}
+	return bottomSafePadding
 }
 
 func (a App) queueBannerHeight() int {
@@ -279,6 +315,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bootDoneMsg:
 		a.bootActive = false
 		a.updateViewport()
+		if a.inlineMode {
+			return a, tea.Println(RenderInlineBanner(a.state.Version, a.state.WorkDir, a.state.RepoURL, a.state.Model.Name, a.state.Model.CtxMax))
+		}
 		return a, nil
 
 	case model.Event:
@@ -321,7 +360,36 @@ func (a *App) resizeInput() {
 
 func (a *App) resizeActiveLayout() {
 	a.resizeInput()
-	a.viewport = a.viewport.SetSize(a.chatWidth()-4, a.chatHeight())
+	contentLines := a.viewport.TotalLines()
+	if contentLines < 1 {
+		contentLines = 1
+	}
+	a.viewport = a.viewport.SetSize(a.chatWidth()-4, a.desiredChatHeight(contentLines))
+}
+
+func (a *App) wantsInlineModalAltScreen() bool {
+	if a == nil || !a.inlineMode {
+		return false
+	}
+	return a.modelPicker != nil || a.setupPopup != nil
+}
+
+func (a *App) syncInlineModalAltScreen() tea.Cmd {
+	if a == nil || !a.inlineMode {
+		return nil
+	}
+
+	wants := a.wantsInlineModalAltScreen()
+	switch {
+	case wants && !a.inlineModalAltScreen:
+		a.inlineModalAltScreen = true
+		return tea.EnterAltScreen
+	case !wants && a.inlineModalAltScreen:
+		a.inlineModalAltScreen = false
+		return tea.ExitAltScreen
+	default:
+		return nil
+	}
 }
 
 func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -341,11 +409,15 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.state = a.clearThinking()
 		a.input = a.input.Reset()
 		a.resizeActiveLayout()
-		a.state = a.state.WithMessage(model.Message{
+		interruptMsg := model.Message{
 			Kind:    model.MsgAgent,
 			Content: "Interrupt requested. Press Ctrl+C again within 1 second to exit.",
-		})
+		}
+		a.state = a.state.WithMessage(interruptMsg)
 		a.updateViewport()
+		if a.inlineMode {
+			return a, a.inlinePrintMessage(interruptMsg)
+		}
 		return a, nil
 	}
 
@@ -638,7 +710,7 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if a.setupPopup.CanEscape {
 					a.setupPopup = nil
 				}
-				return a, nil
+				return a, a.syncInlineModalAltScreen()
 			}
 		case model.SetupScreenPresetPicker:
 			switch msg.String() {
@@ -738,11 +810,11 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				default:
 				}
 			}
-			return a, nil
+			return a, a.syncInlineModalAltScreen()
 		case "esc":
 			a.trainView.SelectionPopup = nil
 			a.modelPicker = nil
-			return a, nil
+			return a, a.syncInlineModalAltScreen()
 		}
 		return a, nil
 	}
@@ -798,6 +870,9 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.input = a.input.PushHistory(val)
 			a.input = a.input.Reset()
 			a.resizeActiveLayout()
+			if a.inlineMode {
+				return a, a.inlinePrintUserInput(val)
+			}
 			return a, nil
 		}
 		// Reset stats for new task
@@ -812,6 +887,10 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.input = a.input.Reset()
 		a.resizeActiveLayout()
 		a.updateViewport()
+		var inlineCmd tea.Cmd
+		if a.inlineMode {
+			inlineCmd = a.inlinePrintUserInput(val)
+		}
 		if a.userCh != nil {
 			select {
 			case a.userCh <- val:
@@ -819,7 +898,7 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// drop if buffer full — avoids freezing the UI
 			}
 		}
-		return a, nil
+		return a, inlineCmd
 
 	case "pgup", "pgdown", "home", "end":
 		var cmd tea.Cmd
@@ -895,6 +974,7 @@ func (a App) maybeDispatchQueuedInput() App {
 
 func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	a = a.applyUsageSnapshot(ev)
+	prevMessages := append([]model.Message(nil), a.state.Messages...)
 
 	var eventCmd tea.Cmd
 
@@ -1107,6 +1187,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 			cp := *ev.Popup
 			cp.Options = append([]model.SelectionOption(nil), ev.Popup.Options...)
 			a.modelPicker = &cp
+			eventCmd = combineCmds(eventCmd, a.syncInlineModalAltScreen())
 		}
 
 	case model.ModelSetupOpen:
@@ -1114,10 +1195,12 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 			cp := *ev.SetupPopup
 			cp.PresetOptions = append([]model.SelectionOption(nil), ev.SetupPopup.PresetOptions...)
 			a.setupPopup = &cp
+			eventCmd = combineCmds(eventCmd, a.syncInlineModalAltScreen())
 		}
 
 	case model.ModelSetupClose:
 		a.setupPopup = nil
+		eventCmd = combineCmds(eventCmd, a.syncInlineModalAltScreen())
 
 	case model.ModelSetupTokenError:
 		if a.setupPopup != nil {
@@ -1461,6 +1544,10 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 
 	a = a.maybeDispatchQueuedInput()
 	a.updateViewport()
+	if a.inlineMode {
+		inlineCmd := a.inlineEventCmd(ev, prevMessages)
+		eventCmd = combineCmds(eventCmd, inlineCmd)
+	}
 	if eventCmd != nil {
 		return a, tea.Batch(eventCmd, a.waitForEvent)
 	}
@@ -2739,6 +2826,10 @@ func (a *App) agentStatus() string {
 }
 
 func (a *App) updateViewport() {
+	if a.inlineMode {
+		a.viewport = a.viewport.SetContent("")
+		return
+	}
 	// Check if user is at (or near) bottom before updating content.
 	atBottom := a.viewport.AtBottom() || a.viewport.TotalLines() <= a.viewport.Model.Height
 	width := a.viewport.Model.Width
@@ -2750,10 +2841,11 @@ func (a *App) updateViewport() {
 	}
 	a.thinking.SetText(a.thinkingStatusText())
 	content := panels.RenderMessages(a.viewportRenderState(), a.thinking.View(), a.thinking.FrameView(), width, a.trainView.Active)
-	// Pad content so it's bottom-anchored (like CC/Codex).
 	contentLines := strings.Count(content, "\n") + 1
-	viewHeight := a.viewport.Model.Height
-	if contentLines < viewHeight && content != "" {
+	viewHeight := a.desiredChatHeight(contentLines)
+	a.viewport = a.viewport.SetSize(width, viewHeight)
+	if !a.inlineMode && contentLines < viewHeight && content != "" {
+		// Fullscreen modes keep the transcript bottom-anchored.
 		padding := strings.Repeat("\n", viewHeight-contentLines)
 		content = padding + content
 	}
@@ -2774,6 +2866,9 @@ func (a App) activeHUDHeight() int {
 func (a App) viewportRenderState() model.State {
 	s := a.state
 	s.WaitElapsed = a.currentWaitElapsed()
+	if a.modelPicker != nil || a.setupPopup != nil {
+		s = s.WithThinking(false).ClearWait()
+	}
 	msgs := make([]model.Message, len(s.Messages))
 	copy(msgs, s.Messages)
 	for i := range msgs {
@@ -2830,8 +2925,14 @@ func (a App) View() string {
 	if a.bugView.Active() {
 		return a.renderBugView()
 	}
+	if a.inlineMode && !a.inlineModalAltScreen {
+		return a.renderInlineMainView()
+	}
 
-	topBar := panels.RenderTopBar(a.state, a.width)
+	topBar := ""
+	if !a.inlineMode {
+		topBar = panels.RenderTopBar(a.state, a.width)
+	}
 	chat := a.viewport.View()
 	queueBanner := ""
 	if len(a.queuedInputs) > 0 {
@@ -2840,7 +2941,10 @@ func (a App) View() string {
 	input := a.input.View()
 	hintBar := panels.RenderHintBar(a.state, a.width)
 
-	parts := []string{topBar}
+	parts := []string{}
+	if topBar != "" {
+		parts = append(parts, topBar)
+	}
 	if a.trainView.Active {
 		parts = append(parts, panels.RenderTrainHUD(a.trainView, a.width, a.agentStatus()))
 		hintBar = panels.RenderTrainHUDHintBar(a.width)
@@ -2855,7 +2959,7 @@ func (a App) View() string {
 		input,
 		hintBar,
 	)
-	for i := 0; i < bottomSafePadding; i++ {
+	for i := 0; i < a.bottomPaddingHeight(); i++ {
 		parts = append(parts, "")
 	}
 
@@ -2871,10 +2975,10 @@ func (a App) View() string {
 		layout = overlayPopup(layout, panels.RenderSetupPopup(a.setupPopup), a.width, a.height)
 	}
 
-	return trimViewHeight(layout, a.height)
+	return trimViewHeight(layout, a.height, !a.inlineMode)
 }
 
-func trimViewHeight(content string, height int) string {
+func trimViewHeight(content string, height int, fill bool) string {
 	if height <= 0 {
 		return content
 	}
@@ -2882,8 +2986,18 @@ func trimViewHeight(content string, height int) string {
 	if len(lines) > height {
 		lines = lines[:height]
 	}
-	for len(lines) < height {
-		lines = append(lines, "")
+	if fill {
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+	}
+	if !fill {
+		for len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+		if len(lines) == 0 {
+			return ""
+		}
 	}
 	return strings.Join(lines, "\n")
 }

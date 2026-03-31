@@ -37,7 +37,7 @@ var buildProvider = func(resolved llm.ResolvedConfig) (llm.Provider, error) {
 	return llm.DefaultManager().Build(resolved)
 }
 
-var Version = "MindSpore CLI. " + version.Version
+var Version = "MindSpore Code. " + version.Version
 
 // Application is the top-level composition container.
 type Application struct {
@@ -47,6 +47,7 @@ type Application struct {
 	WorkDir                 string
 	RepoURL                 string
 	Config                  *configs.Config
+	tuiMode                 TUIMode
 	provider                llm.Provider
 	toolRegistry            *tools.Registry
 	ctxManager              *agentctx.Manager
@@ -106,6 +107,7 @@ type BootstrapConfig struct {
 	URL             string
 	Model           string
 	Key             string
+	TUIMode         TUIMode
 	Resume          bool
 	ResumeSessionID string
 	Replay          bool
@@ -291,6 +293,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		WorkDir:                 workDir,
 		RepoURL:                 "github.com/vigo999/mindspore-code",
 		Config:                  config,
+		tuiMode:                 cfg.TUIMode.normalize(),
 		provider:                provider,
 		toolRegistry:            toolRegistry,
 		ctxManager:              ctxManager,

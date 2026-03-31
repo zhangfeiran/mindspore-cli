@@ -187,9 +187,12 @@ func (a *App) applyBugClose(id int) {
 }
 
 func (a App) renderBugView() string {
-	topBar := panels.RenderTopBar(a.state, a.width)
+	topBar := ""
+	if !a.inlineMode {
+		topBar = panels.RenderTopBar(a.state, a.width)
+	}
 	hintBar := panels.RenderBugHintBar(a.width, a.bugView.Mode)
-	bodyHeight := a.height - lipgloss.Height(topBar) - lipgloss.Height(hintBar) - bottomSafePadding
+	bodyHeight := a.height - lipgloss.Height(topBar) - lipgloss.Height(hintBar) - a.bottomPaddingHeight()
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -206,5 +209,13 @@ func (a App) renderBugView() string {
 		body = panels.RenderBugDetail(bodyWidth, bodyHeight, a.bugView.Detail)
 	}
 
-	return trimViewHeight(lipgloss.JoinVertical(lipgloss.Left, topBar, body, hintBar, "", ""), a.height)
+	parts := []string{}
+	if topBar != "" {
+		parts = append(parts, topBar)
+	}
+	parts = append(parts, body, hintBar)
+	for i := 0; i < a.bottomPaddingHeight(); i++ {
+		parts = append(parts, "")
+	}
+	return trimViewHeight(lipgloss.JoinVertical(lipgloss.Left, parts...), a.height, !a.inlineMode)
 }
