@@ -81,6 +81,40 @@ func TestPermissionPrompt_EscCancels(t *testing.T) {
 	}
 }
 
+func TestInlinePermissionPromptStaysInMainInlineView(t *testing.T) {
+	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+
+	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	app = next.(App)
+	app.bannerPrinted = true
+
+	next, _ = app.handleEvent(model.Event{
+		Type: model.PermissionPrompt,
+		Permission: &model.PermissionPromptData{
+			Title:        "Permission required",
+			Message:      "allow shell?",
+			Options:      []model.PermissionOption{{Input: "1", Label: "1. Yes"}, {Input: "3", Label: "3. No"}},
+			DefaultIndex: 0,
+		},
+	})
+	app = next.(App)
+
+	if app.inlineModalAltScreen {
+		t.Fatal("expected inline permission prompt to stay in the main inline view")
+	}
+	view := app.View()
+	if !strings.Contains(view, "Permission required") || !strings.Contains(view, "allow shell?") {
+		t.Fatalf("expected inline permission prompt to be visible, got:\n%s", view)
+	}
+
+	next, _ = app.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	app = next.(App)
+	if app.inlineModalAltScreen {
+		t.Fatal("expected inline permission prompt close to avoid alt-screen")
+	}
+}
+
 func TestPermissionsView_EnterAddRuleOpensDialogAndSubmits(t *testing.T) {
 	userCh := make(chan string, 1)
 	app := New(nil, userCh, "test", ".", "", "demo-model", 4096)
@@ -193,6 +227,38 @@ func TestPermissionsView_TabSearchAndSelect(t *testing.T) {
 	items := permissionsFilteredItems(app.permissionsView)
 	if len(items) != 1 || items[0] != "Tool(write)" {
 		t.Fatalf("filtered items = %v, want [Tool(write)]", items)
+	}
+}
+
+func TestInlinePermissionsViewStaysInMainInlineView(t *testing.T) {
+	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+
+	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	app = next.(App)
+	app.bannerPrinted = true
+
+	next, _ = app.handleEvent(model.Event{
+		Type: model.PermissionsView,
+		Permissions: &model.PermissionsViewData{
+			Allow: []string{"edit(*.md)"},
+			Ask:   []string{},
+			Deny:  []string{},
+		},
+	})
+	app = next.(App)
+
+	if app.inlineModalAltScreen {
+		t.Fatal("expected inline permissions view to stay in the main inline view")
+	}
+	if view := app.View(); !strings.Contains(view, "Permissions:") {
+		t.Fatalf("expected inline permissions view to be visible, got:\n%s", view)
+	}
+
+	next, _ = app.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	app = next.(App)
+	if app.inlineModalAltScreen {
+		t.Fatal("expected inline permissions view close to avoid alt-screen")
 	}
 }
 

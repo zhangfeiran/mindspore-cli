@@ -43,3 +43,19 @@ func TestRenderInlineBannerIncludesMetadata(t *testing.T) {
 		t.Fatalf("expected banner rows to stay left aligned, got:\n%s", banner)
 	}
 }
+
+func TestInlineResizeDoesNotEmitExtraCommand(t *testing.T) {
+	app := New(nil, nil, "MindSpore Code. test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+	app.bannerPrinted = true
+
+	next, cmd := app.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	app = next.(App)
+
+	if cmd != nil {
+		t.Fatal("expected inline resize to rely on normal re-render without extra banner or clear commands")
+	}
+	if app.width != 100 || app.height != 24 {
+		t.Fatalf("unexpected size after resize: %dx%d", app.width, app.height)
+	}
+}

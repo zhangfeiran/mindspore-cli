@@ -215,7 +215,6 @@ func NewReplay(ch <-chan model.Event, userCh chan<- string, version, workDir, re
 	return app
 }
 
-
 func (a App) waitForEvent() tea.Msg {
 	ev, ok := <-a.eventCh
 	if !ok {
@@ -302,14 +301,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 
 	case tea.WindowSizeMsg:
+		if a.width == msg.Width && a.height == msg.Height {
+			return a, nil
+		}
 		a.width = msg.Width
 		a.height = msg.Height
 		a.resizeActiveLayout()
-		if a.bannerPrinted && !a.bootActive && !a.inlineModalAltScreen {
-			a.bannerPrinted = false
-			return a, tea.Sequence(tea.ClearScreen, a.maybePrintBanner())
+		if a.bootActive || a.inlineModalAltScreen || a.issueView.Active() || a.bugView.Active() {
+			return a, tea.ClearScreen
 		}
-		return a, tea.ClearScreen
+		return a, nil
 
 	case bootTickMsg:
 		if !a.bootActive {
@@ -346,7 +347,7 @@ func (a App) ensureWaitForEvent(cmd tea.Cmd) tea.Cmd {
 	if cmd == nil {
 		return a.waitForEvent
 	}
-	return tea.Batch(cmd, a.waitForEvent)
+	return tea.Sequence(cmd, a.waitForEvent)
 }
 
 // chatWidth returns the width available for the chat panel.
@@ -1559,7 +1560,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	inlineCmd := a.inlineEventCmd(ev, prevMessages)
 	eventCmd = combineCmds(eventCmd, inlineCmd, a.maybePrintBanner())
 	if eventCmd != nil {
-		return a, tea.Batch(eventCmd, a.waitForEvent)
+		return a, tea.Sequence(eventCmd, a.waitForEvent)
 	}
 	return a, a.waitForEvent
 }

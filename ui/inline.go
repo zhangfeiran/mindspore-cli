@@ -122,6 +122,12 @@ func (a App) renderInlineMainView() string {
 }
 
 func (a App) inlineStatusView() string {
+	if a.permissionPrompt != nil {
+		return renderPermissionPromptPopup(a.permissionPrompt)
+	}
+	if a.permissionsView != nil {
+		return renderPermissionsViewPopup(a.permissionsView)
+	}
 	return strings.TrimSpace(a.inlineActivePreview())
 }
 
@@ -130,7 +136,7 @@ func (a App) inlineActivePreview() string {
 		return tailInlineLines(a.renderInlineTranscriptMessage(msg), 8)
 	}
 	if msg, ok := a.inlineLastActiveTool(); ok {
-		return tailInlineLines(a.renderInlineTranscriptMessage(msg), 8)
+		return tailInlineToolLines(a.renderInlineTranscriptMessage(msg), 8)
 	}
 	if a.state.WaitKind == model.WaitModel {
 		return a.thinking.View()
@@ -142,6 +148,7 @@ func (a App) inlineActivePreview() string {
 }
 
 func (a App) renderInlineTranscriptMessage(msg model.Message) string {
+	msg = a.renderToolMessageContent(msg)
 	temp := model.NewState("", "", "", "", 0)
 	temp.Messages = []model.Message{msg}
 	temp.WaitKind = a.state.WaitKind
@@ -179,16 +186,7 @@ func (a App) inlinePrintResolvedTool(ev model.Event) tea.Cmd {
 	return a.inlinePrintMessage(msg)
 }
 
-func (a App) inlinePrintShellFinished(ev model.Event, before []model.Message) tea.Cmd {
-	prevMsg, hadPrev := inlineFindToolMessage(before, ev.ToolCallID)
-	if hadPrev && strings.TrimSpace(prevMsg.Content) != "" {
-		summary := strings.TrimSpace(ev.Summary)
-		if summary == "" || summary == "completed" {
-			return nil
-		}
-		return tea.Println(inlineMetaStyle.Render("shell " + summary))
-	}
-
+func (a App) inlinePrintShellFinished(ev model.Event, _ []model.Message) tea.Cmd {
 	msg, ok := a.inlineResolvedToolMessage(ev)
 	if !ok {
 		return nil
@@ -252,7 +250,7 @@ func (a App) inlineEventCmd(ev model.Event, prevMessages []model.Message) tea.Cm
 		}
 		return a.inlinePrintMessage(a.pendingToolMessage(ev))
 	case model.CmdOutput:
-		return a.inlinePrintCommandOutput(ev.Message)
+		return nil
 	case model.CmdFinished:
 		return a.inlinePrintShellFinished(ev, prevMessages)
 	case model.ToolRead, model.ToolGrep, model.ToolGlob, model.ToolEdit, model.ToolWrite, model.ToolSkill, model.ToolWarning, model.ToolError, model.ToolReplay:
@@ -324,6 +322,33 @@ func tailInlineLines(content string, limit int) string {
 	return strings.Join(lines[len(lines)-limit:], "\n")
 }
 
+func tailInlineToolLines(content string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	if len(lines) <= limit {
+		return strings.Join(lines, "\n")
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+
+	keepTail := limit - 1
+	if keepTail <= 0 {
+		return lines[0]
+	}
+	tail := lines[len(lines)-keepTail:]
+	if len(tail) > 0 && tail[0] == lines[0] {
+		return strings.Join(tail, "\n")
+	}
+
+	visible := make([]string, 0, 1+len(tail))
+	visible = append(visible, lines[0])
+	visible = append(visible, tail...)
+	return strings.Join(visible, "\n")
+}
+
 func combineCmds(cmds ...tea.Cmd) tea.Cmd {
 	filtered := make([]tea.Cmd, 0, len(cmds))
 	for _, cmd := range cmds {
@@ -337,7 +362,7 @@ func combineCmds(cmds ...tea.Cmd) tea.Cmd {
 	case 1:
 		return filtered[0]
 	default:
-		return tea.Batch(filtered...)
+		return tea.Sequence(filtered...)
 	}
 }
 
