@@ -11,6 +11,29 @@ If the baseline is PyTorch on Ascend, first verify that the script actually
 imports `torch_npu` and executes tensors and modules on NPU. A plain CPU
 `torch` script is not an Ascend baseline.
 
+## Shared Kernel Library: torch_npu and mindspore
+
+When comparing `torch_npu` vs `mindspore` on Ascend, both frameworks call the
+same CANN/aclnn operator library underneath. This means:
+
+- Kernel-level numerical behavior should be identical for the same operator with
+  the same inputs, dtype, and configuration.
+- Small deltas between the two frameworks are not explained by "different
+  kernels." They indicate a callsite mismatch, parameter mismatch, or wrong
+  operator mapping.
+- A fully aligned `mindspore` operator path should exist for any `torch_npu`
+  operator. Do not accept residual deltas without evidence that operator mapping
+  and all parameters are fully aligned.
+
+When a small persistent delta remains between `torch_npu` and `mindspore` for
+the same operation, the most likely causes are:
+
+- different implicit default parameters
+- different operator variant (e.g., legacy `mindspore.ops` vs aligned
+  `mindspore.mint`)
+- dtype or cast-path differences
+- device placement mismatch
+
 ## High-Value Checks
 
 ### HF32 or Other Special Precision Modes

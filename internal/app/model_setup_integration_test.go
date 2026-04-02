@@ -48,7 +48,7 @@ func TestModelCommand_OpensSetupPopupWithState(t *testing.T) {
 			}
 		}
 	}
-	if disabledCount != 3 {
-		t.Errorf("expected 3 disabled (coming soon) presets, got %d", disabledCount)
+	if disabledCount != 2 {
+		t.Errorf("expected 2 disabled (coming soon) presets, got %d", disabledCount)
 	}
 }

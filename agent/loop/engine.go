@@ -405,10 +405,6 @@ func (ex *executor) handleResponse(ctx context.Context, resp *llm.CompletionResp
 
 func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error {
 	toolName := tc.Function.Name
-	startEv := NewEvent(EventToolCallStart, describeToolCall(toolName, tc.Function.Arguments))
-	startEv.ToolName = toolName
-	startEv.ToolCallID = tc.ID
-	ex.addEvent(startEv)
 
 	tool, ok := ex.engine.tools.Get(toolName)
 	if !ok {
@@ -425,7 +421,8 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		return nil
 	}
 
-	// Check permission
+	// Check permission before emitting ToolCallStart so the UI does not
+	// show "running command..." while actually waiting for user approval.
 	action := extractAction(toolName, tc.Function.Arguments)
 	path := extractPathArg(tc.Function.Arguments)
 	granted, err := ex.engine.permission.Request(ctx, toolName, action, path)
@@ -445,6 +442,11 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		ex.addEvent(NewEvent(EventToolError, errMsg))
 		return nil
 	}
+
+	startEv := NewEvent(EventToolCallStart, describeToolCall(toolName, tc.Function.Arguments))
+	startEv.ToolName = toolName
+	startEv.ToolCallID = tc.ID
+	ex.addEvent(startEv)
 
 	// Execute
 	var result *tools.Result

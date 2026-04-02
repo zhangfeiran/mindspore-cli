@@ -423,6 +423,8 @@ func TestRunPersistsToolErrorBeforeErrorRender(t *testing.T) {
 		t.Fatalf("RunWithContextStream failed: %v", err)
 	}
 
-	requireOrder(t, log, "tool_call:missing_tool", "snapshot:tool_call:missing_tool", "ui:ToolCallStart")
+	// ToolCallStart is emitted after permission check, so missing tools
+	// skip it entirely — verify error handling order instead.
+	requireOrder(t, log, "tool_call:missing_tool", "snapshot:tool_call:missing_tool")
 	requireOrder(t, log, "tool_result:missing_tool", "snapshot:tool_result:missing_tool", "ui:ToolError")
 }

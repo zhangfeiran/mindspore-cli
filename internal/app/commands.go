@@ -866,6 +866,7 @@ func (a *Application) cmdHelp() {
 Model Commands:
   /model                  Open model setup (mscode-provided or your own)
   /model kimi-k2.5-free   Switch to built-in preset directly
+  /model deepseek-v3      Switch to built-in preset directly
   /model gpt-4o           Switch model (keeps current provider)
   /model openai-completion:gpt-4o  Switch provider and model
 

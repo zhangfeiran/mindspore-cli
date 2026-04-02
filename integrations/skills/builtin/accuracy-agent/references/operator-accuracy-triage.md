@@ -13,14 +13,19 @@ callsite mismatch rather than from the operator implementation itself.
 
 Compare how both model scripts call the operator, not just the operator name.
 
-Check for:
+Complete this checklist before escalating to an operator bug:
 
-- explicit arguments
-- implicit default arguments
-- positional versus keyword argument mapping
-- dtype, cast, layout, and shape expectations
-- reduction, eps, axis, mask, keepdim, align_corners, and similar semantic
+- [ ] explicit arguments
+- [ ] implicit default arguments
+- [ ] positional versus keyword argument mapping
+- [ ] dtype, cast, and shape expectations
+- [ ] actual device placement
+- [ ] reduction, eps, axis, mask, keepdim, align_corners, and similar semantic
   knobs
+
+Treat implicit defaults as first-class evidence. If the baseline and target
+scripts do not pass every relevant argument explicitly, inspect the actual API
+defaults on both sides before blaming the operator implementation.
 
 Why this matters:
 
@@ -50,21 +55,34 @@ Interpretation:
 - if the isolated repro does not reproduce the gap, return to the surrounding
   module context instead of escalating an operator claim
 
-## Step 3: Try Replacement or Reimplementation
+## Step 3: Try Direct Replacement Before Reimplementation
 
 Once the single-operator repro confirms the issue, try a safer equivalent path
 before proposing large changes.
 
-Prefer this order:
+Use this repair-priority checklist in order:
 
-1. swap to a semantically equivalent operator that is known to align better for
-   the task
-2. prefer non-legacy MindSpore operator variants over legacy ones when
-   available
-3. check whether a `mindspore.mint` operator can replace a legacy
-   `mindspore.nn` or `mindspore.ops` path
-4. reimplement the operator from smaller primitives only if replacement is not
-   viable
+1. If the mismatching MindSpore path is under `mindspore.nn` or
+   `mindspore.ops`, first check whether there is a same-name or officially
+   mapped `mindspore.mint` operator for the same semantics.
+2. Prefer a direct `mindspore.mint` replacement over a handwritten
+   reimplementation from smaller `mint` operators. A direct replacement is the
+   shortest and usually the highest-confidence fix path.
+3. If no direct `mindspore.mint` replacement exists, prefer another documented
+   non-legacy aligned operator variant over a legacy path when available.
+4. Reimplement the operator from smaller operators only if direct replacement
+   is unavailable, semantically incompatible, or proven insufficient by
+   validation.
+
+Why this order matters:
+
+- some `mindspore.nn` and `mindspore.ops` entries are legacy paths in migration
+  work
+- `mindspore.mint` operators often align more closely with the corresponding
+  `torch` or `torch_npu` operator in both API schema and underlying NPU kernel
+  path
+- a direct `mindspore.mint` replacement is usually cheaper, clearer, and more
+  reliable than a handwritten small-operator rewrite
 
 Before picking the replacement, check the official PyTorch-to-MindSpore API
 mapping table:
@@ -79,12 +97,17 @@ Use it to confirm:
 - whether the mapped API has documented parameter-name, default-value, or other
   semantic differences
 
-MindSpore note:
+Do not:
 
-- some `mindspore.nn` and `mindspore.ops` entries are legacy paths and may show
-  accuracy issues in migration work
-- `mindspore.mint` operators are often the closest API-schema and precision
-  match to the corresponding torch operators
+- jump to a handwritten `mint` formula or a small-operator rewrite before trying a
+  direct `mindspore.mint` replacement when one exists
+- propose a mathematical decomposition (e.g., rewriting softmax from
+  exp/sum/div, or layernorm from mean/var/scale) when a direct aligned API
+  already covers the semantics — decompositions are fragile, hard to maintain,
+  and usually less precise than a single aligned kernel
+- assume explicit arguments are enough without checking implicit defaults
+- treat a legacy `mindspore.nn` or `mindspore.ops` path as the preferred fix
+  target when an aligned `mindspore.mint` operator is available
 
 ## Step 4: Validate at the Right Scope
 
