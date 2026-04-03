@@ -142,17 +142,10 @@ func (a App) statusView() string {
 }
 
 func (a App) activePreview() string {
-	// Agent deltas are buffered and printed as a single glamour-rendered
-	// message when the reply completes. The live area shows a spinner.
+	if msg, ok := a.lastStreamingAgent(); ok {
+		return tailLines(a.renderTranscriptMessage(msg), 8)
+	}
 	if msg, ok := a.lastActiveTool(); ok {
-		// Shell output is already printed line-by-line via tea.Println;
-		// only show the status header here to avoid a duplicate tail
-		// that creates a visual "cutoff" effect.
-		if msg.Streaming && strings.EqualFold(strings.TrimSpace(msg.ToolName), "Bash") {
-			headerOnly := msg
-			headerOnly.Content = ""
-			return a.renderTranscriptMessage(headerOnly)
-		}
 		return tailLines(a.renderTranscriptMessage(msg), 8)
 	}
 	t := theme.Current
@@ -175,7 +168,7 @@ func (a App) activePreview() string {
 			lipgloss.NewStyle().Foreground(t.Warning).Italic(true))
 		return a.thinking.ViewWithTip()
 	}
-	// Show streaming indicator while buffering agent deltas.
+	// Fallback while deltas are buffered but no streaming message is available.
 	a.deltaMu.Lock()
 	hasDelta := a.deltaBuf.Len() > 0
 	a.deltaMu.Unlock()
