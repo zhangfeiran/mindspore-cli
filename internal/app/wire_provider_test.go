@@ -7,9 +7,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/vigo999/mindspore-code/agent/loop"
+	"github.com/vigo999/mindspore-code/agent/session"
 	"github.com/vigo999/mindspore-code/configs"
 	"github.com/vigo999/mindspore-code/integrations/llm"
 )
@@ -110,6 +112,88 @@ func TestWireBootstrapKeyAndURLOverrideEnvDuringProviderInit(t *testing.T) {
 	}
 	if got, want := gotAuth, "Bearer cli-key"; got != want {
 		t.Fatalf("Authorization header = %q, want %q", got, want)
+	}
+}
+
+func TestWireFreshSessionDoesNotCreateSessionDirBeforeLiveLLMActivity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MSCODE_PROVIDER", "")
+	t.Setenv("MSCODE_API_KEY", "")
+	t.Setenv("MSCODE_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+
+	tempDir := t.TempDir()
+	t.Chdir(tempDir)
+
+	app, err := Wire(BootstrapConfig{})
+	if err != nil {
+		t.Fatalf("Wire() error = %v", err)
+	}
+	if app.session == nil {
+		t.Fatal("expected session to be allocated")
+	}
+
+	sessionDir := filepath.Dir(app.session.Path())
+	if _, err := os.Stat(sessionDir); !os.IsNotExist(err) {
+		t.Fatalf("expected fresh session dir to stay absent before live llm activity, got %v", err)
+	}
+}
+
+func TestWireResumeAcceptsLegacyLoadSkillSessionPermissions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MSCODE_PROVIDER", "")
+	t.Setenv("MSCODE_API_KEY", "")
+	t.Setenv("MSCODE_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	runtimeSession, err := session.Create(workDir, "system prompt")
+	if err != nil {
+		t.Fatalf("session.Create() err = %v", err)
+	}
+	if err := runtimeSession.Activate(); err != nil {
+		t.Fatalf("runtimeSession.Activate() err = %v", err)
+	}
+	if err := runtimeSession.Close(); err != nil {
+		t.Fatalf("runtimeSession.Close() err = %v", err)
+	}
+
+	sessionDir := filepath.Dir(runtimeSession.Path())
+	legacy := `{
+  "permissions": {
+    "allow": [
+      "load_skill({\"name\":\"failure-agent\"})"
+    ]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(sessionDir, "permissions.json"), []byte(legacy), 0644); err != nil {
+		t.Fatalf("WriteFile(session permissions) err = %v", err)
+	}
+
+	app, err := Wire(BootstrapConfig{
+		Resume:          true,
+		ResumeSessionID: runtimeSession.ID(),
+	})
+	if err != nil {
+		t.Fatalf("Wire() err = %v", err)
+	}
+	if app.permissionSettingsIssue != nil {
+		t.Fatalf("permissionSettingsIssue = %#v, want nil", app.permissionSettingsIssue)
+	}
+	if !app.sessionStoreReady.Load() {
+		t.Fatal("expected session permission store to be ready")
 	}
 }
 

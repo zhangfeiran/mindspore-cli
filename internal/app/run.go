@@ -27,6 +27,7 @@ import (
 const provideAPIKeyFirstMsg = "LLM unavailable: provide api key first, or /login and switch to free model."
 const interruptActiveTaskToken = "__interrupt_active_task__"
 const internalPermissionsActionPrefix = "\x00permissions:"
+const historyReplayReadyToken = "__history_replay_ready__"
 
 var waitReplayDelay = func(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
@@ -101,8 +102,10 @@ func (a *Application) runReal() error {
 		a.EventCh <- model.Event{Type: model.IssueUserUpdate, Message: a.issueUser}
 	}
 
-	go a.replayHistory()
 	go a.inputLoop(userCh)
+	if !a.deferHistoryReplay {
+		a.startReplayHistory()
+	}
 	if a.permissionSettingsIssue != nil && !a.replayOnly {
 		a.emitPermissionSettingsPrompt("")
 	}
@@ -142,6 +145,12 @@ func (a *Application) processInput(input string) {
 			return
 		}
 		a.startDeferredStartup()
+		return
+	}
+	if trimmed == historyReplayReadyToken {
+		if a.deferHistoryReplay {
+			a.startReplayHistory()
+		}
 		return
 	}
 
@@ -214,10 +223,6 @@ func (a *Application) runTask(description string) {
 		if err := a.persistSessionSnapshot(); err != nil {
 			a.emitToolError("session", "Failed to persist session snapshot: %v", err)
 		}
-	}
-	if err := a.activateSessionPersistence(); err != nil {
-		a.emitToolError("session", "Failed to start session persistence: %v", err)
-		return
 	}
 
 	if !a.llmReady {
@@ -335,6 +340,16 @@ func (a *Application) replayHistory() {
 		return
 	}
 	a.emitTokenUsageSnapshot()
+}
+
+func (a *Application) startReplayHistory() {
+	if a == nil {
+		return
+	}
+	if !a.historyReplayStarted.CompareAndSwap(false, true) {
+		return
+	}
+	go a.replayHistory()
 }
 
 func (a *Application) replayHistoryTimeline() {
@@ -475,15 +490,26 @@ func (a *Application) persistSessionSnapshot() error {
 	return a.session.SaveSnapshot(a.currentSystemPrompt(), a.ctxManager.GetNonSystemMessages())
 }
 
-func (a *Application) activateSessionPersistence() error {
+func (a *Application) noteLiveLLMActivity() error {
 	if a == nil || a.session == nil {
 		return nil
 	}
-	return a.session.Activate()
+	if a.sessionLLMActivity.Load() {
+		return nil
+	}
+	if err := a.session.Activate(); err != nil {
+		return err
+	}
+	a.ensureSessionPermissionStore()
+	a.sessionLLMActivity.Store(true)
+	return nil
 }
 
 func (a *Application) exitResumeHint() string {
 	if a == nil || a.replayOnly || a.session == nil {
+		return ""
+	}
+	if !a.sessionLLMActivity.Load() {
 		return ""
 	}
 
@@ -538,6 +564,7 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	if len(args) > 0 && args[0] == "replay" {
 		fs := flag.NewFlagSet("mindspore-code replay", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
+		debug := fs.Bool("debug", false, "Dump raw LLM requests/responses into the session directory")
 		if err := fs.Parse(args[1:]); err != nil {
 			return BootstrapConfig{}, err
 		}
@@ -549,6 +576,7 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 			Replay:          true,
 			ReplaySessionID: target,
 			ReplaySpeed:     speed,
+			Debug:           *debug,
 		}, nil
 	}
 
@@ -558,6 +586,7 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 		url := fs.String("url", "", "LLM API base URL")
 		modelFlag := fs.String("model", "", "Model name")
 		apiKey := fs.String("api-key", "", "API key")
+		debug := fs.Bool("debug", false, "Dump raw LLM requests/responses into the session directory")
 		if err := fs.Parse(args[1:]); err != nil {
 			return BootstrapConfig{}, err
 		}
@@ -569,6 +598,7 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 			URL:    *url,
 			Model:  *modelFlag,
 			Key:    *apiKey,
+			Debug:  *debug,
 			Resume: true,
 		}
 		if len(rest) == 1 {
@@ -582,6 +612,7 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 	url := fs.String("url", "", "LLM API base URL")
 	modelFlag := fs.String("model", "", "Model name")
 	apiKey := fs.String("api-key", "", "API key")
+	debug := fs.Bool("debug", false, "Dump raw LLM requests/responses into the session directory")
 
 	if err := fs.Parse(args); err != nil {
 		return BootstrapConfig{}, err
@@ -594,6 +625,7 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 		URL:   *url,
 		Model: *modelFlag,
 		Key:   *apiKey,
+		Debug: *debug,
 	}, nil
 }
 

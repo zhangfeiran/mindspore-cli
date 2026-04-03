@@ -264,6 +264,31 @@ func TestParseBootstrapConfigReplaySpeedOnly(t *testing.T) {
 	}
 }
 
+func TestParseBootstrapConfigDebug(t *testing.T) {
+	cfg, err := parseBootstrapConfig([]string{"--debug"})
+	if err != nil {
+		t.Fatalf("parse debug config: %v", err)
+	}
+	if !cfg.Debug {
+		t.Fatal("expected debug mode to be enabled")
+	}
+}
+
+func TestParseBootstrapConfigResumeDebug(t *testing.T) {
+	cfg, err := parseBootstrapConfig([]string{"resume", "--debug", "sess_123"})
+	if err != nil {
+		t.Fatalf("parse resume debug config: %v", err)
+	}
+	if !cfg.Resume {
+		t.Fatal("expected resume mode")
+	}
+	if !cfg.Debug {
+		t.Fatal("expected debug mode to be enabled")
+	}
+	if cfg.ResumeSessionID != "sess_123" {
+		t.Fatalf("resume session id = %q, want %q", cfg.ResumeSessionID, "sess_123")
+	}
+}
 
 func TestLooksLikeTrajectoryPath(t *testing.T) {
 	tests := []struct {
@@ -301,5 +326,49 @@ func TestShouldSkipReplayDelay(t *testing.T) {
 	}
 	if shouldSkipReplayDelay(model.ToolReplay, model.UserInput) {
 		t.Fatal("did not expect tool replay to next user input to skip delay")
+	}
+}
+
+func TestProcessInputHistoryReplayReadyStartsDeferredReplayOnce(t *testing.T) {
+	eventCh := make(chan model.Event, 2)
+	app := &Application{
+		EventCh:            eventCh,
+		replayBacklog:      []model.Event{{Type: model.UserInput, Message: "hello"}},
+		deferHistoryReplay: true,
+	}
+
+	app.processInput(historyReplayReadyToken)
+
+	select {
+	case ev := <-eventCh:
+		if ev.Type != model.UserInput || ev.Message != "hello" {
+			t.Fatalf("replayed event = %#v, want user input hello", ev)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected deferred replay to start")
+	}
+
+	app.processInput(historyReplayReadyToken)
+
+	select {
+	case ev := <-eventCh:
+		t.Fatalf("unexpected second replay event: %#v", ev)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestProcessInputHistoryReplayReadyIgnoredWhenReplayNotDeferred(t *testing.T) {
+	eventCh := make(chan model.Event, 1)
+	app := &Application{
+		EventCh:       eventCh,
+		replayBacklog: []model.Event{{Type: model.UserInput, Message: "hello"}},
+	}
+
+	app.processInput(historyReplayReadyToken)
+
+	select {
+	case ev := <-eventCh:
+		t.Fatalf("unexpected replay event without deferred replay: %#v", ev)
+	case <-time.After(50 * time.Millisecond):
 	}
 }

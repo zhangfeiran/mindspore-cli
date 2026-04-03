@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	agentctx "github.com/vigo999/mindspore-code/agent/context"
@@ -44,6 +45,7 @@ type Application struct {
 	Engine                  *loop.Engine
 	EventCh                 chan model.Event
 	llmReady                bool
+	llmDebugDumper          *llm.DebugDumper
 	WorkDir                 string
 	RepoURL                 string
 	Config                  *configs.Config
@@ -56,8 +58,12 @@ type Application struct {
 	session                 *session.Session
 	replayBacklog           []model.Event
 	replayTimeline          []session.ReplayFrame
+	deferHistoryReplay      bool
+	historyReplayStarted    atomic.Bool
 	replayOnly              bool
 	replaySpeed             float64
+	sessionLLMActivity      atomic.Bool
+	sessionStoreReady       atomic.Bool
 
 	// Skills
 	skillLoader   *skills.Loader
@@ -106,6 +112,7 @@ type BootstrapConfig struct {
 	URL             string
 	Model           string
 	Key             string
+	Debug           bool
 	Resume          bool
 	ResumeSessionID string
 	Replay          bool
@@ -271,27 +278,37 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		ctxManager.SetSystemPrompt(systemPrompt)
 	}
 
+	var llmDebugDumper *llm.DebugDumper
+	if cfg.Debug && runtimeSession != nil {
+		llmDebugDumper = llm.NewDebugDumper(filepath.Dir(runtimeSession.Path()))
+	}
+
 	engineCfg := newEngineConfig(config, systemPrompt)
 	engine := loop.NewEngine(engineCfg, provider, toolRegistry)
 	engine.SetContextManager(ctxManager)
-	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager))
-
+	engine.SetLLMDebugDumper(llmDebugDumper)
 	permService := permission.NewDefaultPermissionService(config.Permissions)
 	permissionUI := NewPermissionPromptUI(eventCh)
 	permService.SetUI(permissionUI)
-	var permSettingsIssue *permissionSettingsIssue
+	var (
+		permSettingsIssue *permissionSettingsIssue
+		sessionStoreReady bool
+	)
 	if issue := preloadScopedPermissionRules(permService, workDir); issue != nil {
 		permSettingsIssue = issue
 	}
-	storeCfg := sessionPermissionStoreConfig(runtimeSession)
-	if store, err := permission.NewPermissionStore(storeCfg); err == nil {
-		permService.SetStore(store)
-	} else {
-		if permSettingsIssue == nil {
-			storePath := storeCfg.Path
-			permSettingsIssue = &permissionSettingsIssue{
-				FilePath: normalizePermissionSettingsPath(storePath, workDir),
-				Detail:   err.Error(),
+	if cfg.Resume {
+		storeCfg := sessionPermissionStoreConfig(runtimeSession)
+		if store, err := permission.NewPermissionStore(storeCfg); err == nil {
+			permService.SetStore(store)
+			sessionStoreReady = true
+		} else {
+			if permSettingsIssue == nil {
+				storePath := storeCfg.Path
+				permSettingsIssue = &permissionSettingsIssue{
+					FilePath: normalizePermissionSettingsPath(storePath, workDir),
+					Detail:   err.Error(),
+				}
 			}
 		}
 	}
@@ -303,6 +320,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		WorkDir:                 workDir,
 		RepoURL:                 "github.com/vigo999/mindspore-code",
 		Config:                  config,
+		llmDebugDumper:          llmDebugDumper,
 		provider:                provider,
 		toolRegistry:            toolRegistry,
 		ctxManager:              ctxManager,
@@ -312,6 +330,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		session:                 runtimeSession,
 		replayBacklog:           replayBacklog,
 		replayTimeline:          replayTimeline,
+		deferHistoryReplay:      cfg.Resume && !cfg.Replay,
 		replayOnly:              cfg.Replay,
 		replaySpeed:             replaySpeedOrDefault(cfg.ReplaySpeed),
 		llmReady:                llmReady,
@@ -321,6 +340,17 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		needsSetupPopup:         needsSetupPopup,
 		savedModelToken:         savedModelToken,
 	}
+	permissionUI.SetYOLOCallbacks(
+		func() bool {
+			if svc, ok := app.permService.(*permission.DefaultPermissionService); ok {
+				return svc.Check("shell", "") == permission.PermissionAllowAlways
+			}
+			return false
+		},
+		func() {
+			app.cmdYolo()
+		},
+	)
 
 	// Auto-login from saved credentials.
 	if cred, err := loadCredentials(); err == nil {
@@ -330,6 +360,10 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		app.issueUser = cred.User
 		app.issueRole = cred.Role
 	}
+	if sessionStoreReady {
+		app.sessionStoreReady.Store(true)
+	}
+	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager, app.noteLiveLLMActivity))
 
 	return app, nil
 }
@@ -366,6 +400,36 @@ func sessionPermissionStoreConfig(runtimeSession *session.Session) permission.Pe
 	}
 	cfg.Path = filepath.Join(sessionDir, "permissions.json")
 	return cfg
+}
+
+func (a *Application) ensureSessionPermissionStore() {
+	if a == nil || a.permService == nil || a.session == nil || a.replayOnly {
+		return
+	}
+	if a.sessionStoreReady.Load() {
+		return
+	}
+	storeSetter, ok := a.permService.(interface {
+		SetStore(permission.PermissionStore)
+	})
+	if !ok {
+		return
+	}
+
+	storeCfg := sessionPermissionStoreConfig(a.session)
+	store, err := permission.NewPermissionStore(storeCfg)
+	if err != nil {
+		if a.permissionSettingsIssue == nil {
+			a.permissionSettingsIssue = &permissionSettingsIssue{
+				FilePath: normalizePermissionSettingsPath(storeCfg.Path, a.WorkDir),
+				Detail:   err.Error(),
+			}
+		}
+		return
+	}
+
+	storeSetter.SetStore(store)
+	a.sessionStoreReady.Store(true)
 }
 
 // SetProvider updates model/key and reinitializes the engine.
@@ -419,8 +483,9 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 		}
 	}
 	newEngine.SetContextManager(a.ctxManager)
+	newEngine.SetLLMDebugDumper(a.llmDebugDumper)
 	newEngine.SetPermissionService(a.permService)
-	newEngine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session, a.ctxManager))
+	newEngine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session, a.ctxManager, a.noteLiveLLMActivity))
 
 	a.Engine = newEngine
 	a.provider = provider
@@ -444,7 +509,14 @@ func initProvider(cfg configs.ModelConfig, opts llm.ResolveOptions) (llm.Provide
 	return client, nil
 }
 
-func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager) *loop.TrajectoryRecorder {
+func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, noteLiveLLMActivity func() error) *loop.TrajectoryRecorder {
+	ensureSessionActive := func() error {
+		if noteLiveLLMActivity == nil {
+			return nil
+		}
+		return noteLiveLLMActivity()
+	}
+
 	return &loop.TrajectoryRecorder{
 		RecordUserInput: func(content string) error {
 			if s == nil {
@@ -456,11 +528,17 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager) *loop.Traje
 			if s == nil {
 				return nil
 			}
+			if err := ensureSessionActive(); err != nil {
+				return err
+			}
 			return s.AppendAssistant(content)
 		},
 		RecordToolCall: func(tc llm.ToolCall) error {
 			if s == nil {
 				return nil
+			}
+			if err := ensureSessionActive(); err != nil {
+				return err
 			}
 			return s.AppendToolCall(tc)
 		},
@@ -468,11 +546,17 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager) *loop.Traje
 			if s == nil {
 				return nil
 			}
+			if err := ensureSessionActive(); err != nil {
+				return err
+			}
 			return s.AppendToolResult(tc.ID, tc.Function.Name, content)
 		},
 		RecordSkillActivate: func(skillName string) error {
 			if s == nil {
 				return nil
+			}
+			if err := ensureSessionActive(); err != nil {
+				return err
 			}
 			return s.AppendSkillActivation(skillName)
 		},

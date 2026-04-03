@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vigo999/mindspore-code/integrations/llm"
+	"github.com/vigo999/mindspore-code/ui/model"
 )
 
 func TestCreateDefersDiskWritesUntilActivate(t *testing.T) {
@@ -139,6 +140,36 @@ func TestReplayTimelinePreservesRecordTimestamps(t *testing.T) {
 	}
 	if timeline[2].Event.Type != "AgentReply" {
 		t.Fatalf("third event type = %q, want %q", timeline[2].Event.Type, "AgentReply")
+	}
+}
+
+func TestReplayTimelineAssignsLoadSkillActivationToOriginalToolCall(t *testing.T) {
+	t0 := time.Date(2026, time.March, 27, 10, 0, 0, 0, time.UTC)
+	t1 := t0.Add(10 * time.Millisecond)
+	t2 := t1.Add(10 * time.Millisecond)
+	t3 := t2.Add(10 * time.Millisecond)
+
+	s := &Session{
+		records: []MessageRecord{
+			{Type: recordTypeToolCall, Timestamp: t0, ToolName: "load_skill", ToolCallID: "call_skill", Arguments: []byte(`{"name":"model-agent"}`)},
+			{Type: recordTypeToolCall, Timestamp: t1, ToolName: "glob", ToolCallID: "call_glob", Arguments: []byte(`{"pattern":"**/*.py"}`)},
+			{Type: recordTypeSkill, Timestamp: t2, SkillName: "model-agent"},
+			{Type: recordTypeToolResult, Timestamp: t3, ToolName: "glob", ToolCallID: "call_glob", Content: "a.py"},
+		},
+	}
+
+	timeline := s.ReplayTimeline()
+	if len(timeline) != 4 {
+		t.Fatalf("timeline length = %d, want 4", len(timeline))
+	}
+	if got, want := timeline[2].Event.Type, model.ToolSkill; got != want {
+		t.Fatalf("third event type = %q, want %q", got, want)
+	}
+	if got, want := timeline[2].Event.ToolCallID, "call_skill"; got != want {
+		t.Fatalf("skill replay tool call id = %q, want %q", got, want)
+	}
+	if got, want := timeline[3].Event.ToolCallID, "call_glob"; got != want {
+		t.Fatalf("glob replay tool call id = %q, want %q", got, want)
 	}
 }
 
