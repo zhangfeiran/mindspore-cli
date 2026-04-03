@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	agentctx "github.com/vigo999/mindspore-code/agent/context"
 	"github.com/vigo999/mindspore-code/integrations/llm"
 	"github.com/vigo999/mindspore-code/internal/bugs"
 	issuepkg "github.com/vigo999/mindspore-code/internal/issues"
@@ -31,6 +32,8 @@ func (a *Application) handleCommand(input string) {
 		a.cmdExit()
 	case "/compact":
 		a.cmdCompact()
+	case "/ctx":
+		a.cmdCtx()
 	case "/clear":
 		a.cmdClear()
 	case "/test":
@@ -401,6 +404,57 @@ func (a *Application) cmdCompact() {
 		Type:    model.AgentReply,
 		Message: message,
 	}
+}
+
+func (a *Application) cmdCtx() {
+	if a.ctxManager == nil {
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: "Context usage is not available.",
+		}
+		return
+	}
+
+	a.emitTokenUsageSnapshot()
+	a.EventCh <- model.Event{
+		Type:    model.AgentReply,
+		Message: formatContextUsageMessage(a.ctxManager.TokenUsageDetails()),
+	}
+}
+
+func formatContextUsageMessage(details agentctx.TokenUsageDetails) string {
+	lines := []string{
+		"Context usage:",
+		"",
+		fmt.Sprintf("  Current:   %d", details.Current),
+		fmt.Sprintf("  Window:    %d", details.ContextWindow),
+		fmt.Sprintf("  Reserved:  %d", details.Reserved),
+		fmt.Sprintf("  Available: %d", details.Available),
+		"",
+		"Source:",
+	}
+
+	switch details.Source {
+	case agentctx.TokenUsageSourceProvider:
+		sourceLabel := "provider API prompt tokens + local delta"
+		if details.Provider != "" {
+			sourceLabel = fmt.Sprintf("%s API prompt tokens + local delta", details.Provider)
+		}
+		lines = append(lines,
+			"  "+sourceLabel,
+			fmt.Sprintf("  Provider prompt tokens: %d", details.ProviderPromptTokens),
+			fmt.Sprintf("  Local delta since provider snapshot: +%d", details.LocalDelta),
+			fmt.Sprintf("  Pure local estimate now: %d", details.LocalEstimatedTotal),
+		)
+	default:
+		lines = append(lines,
+			"  local heuristic estimate fallback",
+			fmt.Sprintf("  Pure local estimate now: %d", details.LocalEstimatedTotal),
+			"  Method: utf8 chars / 4 plus message/tool-call overhead",
+		)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func (a *Application) cmdClear() {
@@ -860,6 +914,7 @@ func (a *Application) cmdHelp() {
   /yolo                   Toggle auto-approve mode
   /exit                   Exit the application
   /compact                Compact conversation context to save tokens
+  /ctx                    Show current context token usage and source
   /clear                  Clear chat history
   /help                   Show this help message
 
