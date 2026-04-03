@@ -341,8 +341,21 @@ func (s *Session) ReplayTimeline() []ReplayFrame {
 	defer s.mu.RUnlock()
 
 	frames := make([]ReplayFrame, 0, len(s.records))
+	pendingLoadSkillCallIDs := make([]string, 0)
 	for _, record := range s.records {
 		ev, ok := replayEvent(record)
+		if record.Type == recordTypeToolCall && strings.TrimSpace(record.ToolName) == "load_skill" {
+			pendingLoadSkillCallIDs = append(pendingLoadSkillCallIDs, strings.TrimSpace(record.ToolCallID))
+		}
+		if record.Type == recordTypeSkill {
+			toolCallID := strings.TrimSpace(record.ToolCallID)
+			if toolCallID == "" && len(pendingLoadSkillCallIDs) > 0 {
+				toolCallID = pendingLoadSkillCallIDs[0]
+				pendingLoadSkillCallIDs = pendingLoadSkillCallIDs[1:]
+			}
+			ev = replaySkillEvent(record.SkillName, toolCallID)
+			ok = true
+		}
 		if !ok {
 			continue
 		}
@@ -1049,12 +1062,13 @@ func replayToolResultEvent(record MessageRecord) model.Event {
 	}
 }
 
-func replaySkillEvent(skillName string) model.Event {
+func replaySkillEvent(skillName, toolCallID string) model.Event {
 	return model.Event{
-		Type:     model.ToolSkill,
-		ToolName: "load_skill",
-		Message:  skillName,
-		Summary:  skillSummary(skillName),
+		Type:       model.ToolSkill,
+		ToolName:   "load_skill",
+		ToolCallID: strings.TrimSpace(toolCallID),
+		Message:    skillName,
+		Summary:    skillSummary(skillName),
 	}
 }
 
@@ -1072,7 +1086,7 @@ func replayEvent(record MessageRecord) (model.Event, bool) {
 		}
 		return replayToolResultEvent(record), true
 	case recordTypeSkill:
-		return replaySkillEvent(record.SkillName), true
+		return replaySkillEvent(record.SkillName, record.ToolCallID), true
 	default:
 		return model.Event{}, false
 	}
