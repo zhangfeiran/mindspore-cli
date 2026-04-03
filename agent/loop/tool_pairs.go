@@ -60,20 +60,15 @@ func joinWithAnd(parts []string) string {
 
 func validToolCallIDs(messages []llm.Message) map[string]struct{} {
 	callCount := make(map[string]int)
-	callPos := make(map[string]int)
 	resultCount := make(map[string]int)
-	resultPos := make(map[string]int)
 
-	for i, msg := range messages {
+	for _, msg := range messages {
 		switch msg.Role {
 		case "assistant":
 			for _, tc := range msg.ToolCalls {
 				id := strings.TrimSpace(tc.ID)
 				if id == "" {
 					continue
-				}
-				if callCount[id] == 0 {
-					callPos[id] = i
 				}
 				callCount[id]++
 			}
@@ -82,16 +77,45 @@ func validToolCallIDs(messages []llm.Message) map[string]struct{} {
 			if id == "" {
 				continue
 			}
-			if resultCount[id] == 0 {
-				resultPos[id] = i
-			}
 			resultCount[id]++
 		}
 	}
 
 	valid := make(map[string]struct{})
-	for id := range callCount {
-		if callCount[id] == 1 && resultCount[id] == 1 && callPos[id] < resultPos[id] {
+	for i := 0; i < len(messages); i++ {
+		msg := messages[i]
+		if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
+			continue
+		}
+
+		blockCalls := make(map[string]int)
+		for _, tc := range msg.ToolCalls {
+			id := strings.TrimSpace(tc.ID)
+			if id == "" {
+				continue
+			}
+			blockCalls[id]++
+		}
+		if len(blockCalls) == 0 {
+			continue
+		}
+
+		blockResults := make(map[string]int)
+		for j := i + 1; j < len(messages) && messages[j].Role == "tool"; j++ {
+			id := strings.TrimSpace(messages[j].ToolCallID)
+			if id == "" {
+				continue
+			}
+			blockResults[id]++
+		}
+
+		for id, count := range blockCalls {
+			if count != 1 {
+				continue
+			}
+			if callCount[id] != 1 || resultCount[id] != 1 || blockResults[id] != 1 {
+				continue
+			}
 			valid[id] = struct{}{}
 		}
 	}
