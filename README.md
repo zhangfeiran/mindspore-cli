@@ -1,8 +1,6 @@
 # MindSpore CLI
 
-**AI Agent for Training, Debugging, and Development**
-
-An open-source terminal agent that helps ML engineers train models, diagnose failures, migrate code, and optimize performance — powered by LLMs with built-in domain skills for the MindSpore and AI infrastructure ecosystem.
+MindSpore CLI uses LLM agents and built-in domain skills to help ML engineers train models, diagnose failures, migrate code, and optimize performance.
 
 <!-- TODO: Add demo GIF/screenshot here -->
 
