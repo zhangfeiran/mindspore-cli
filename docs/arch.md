@@ -1,7 +1,7 @@
 # mscli Architecture
 
 This document describes the target architecture after the refactor
-(see `docs/impl-guide/mindspore-code-refactor-3.md`). It is the single contributor-facing
+(see `docs/impl-guide/mindspore-cli-refactor-3.md`). It is the single contributor-facing
 architecture reference.
 
 ## Three-Repo Model
@@ -19,7 +19,7 @@ ms-factory (incubating/)    knowledge — operator/failure/trick/model cards
 ## Top-Level Shape
 
 ```text
-mindspore-code/
+mindspore-cli/
   cmd/mscli/              process entrypoint
   internal/
     app/                   composition root, startup, commands, UI bridging, prompt history persistence
@@ -205,7 +205,7 @@ Constraints:
 
 ## Removed Packages (refactor)
 
-The following packages are removed by the refactor (see `docs/impl-guide/mindspore-code-refactor-3.md`):
+The following packages are removed by the refactor (see `docs/impl-guide/mindspore-cli-refactor-3.md`):
 
 - `agent/orchestrator/` — was a dispatch layer between planner and executors.
   After removing workflow mode, it became a passthrough. The app now calls
@@ -221,7 +221,7 @@ The following packages are removed by the refactor (see `docs/impl-guide/mindspo
 
 ## Related Docs
 
-- `docs/impl-guide/mindspore-code-refactor-3.md` — refactor plan (workstream A)
+- `docs/impl-guide/mindspore-cli-refactor-3.md` — refactor plan (workstream A)
 - `docs/impl-guide/ms-skills-whole-update-plan.md` — skills plan (workstream B)
 - `docs/impl-guide/ms-factory-struct-v0.1.md` — factory structure and schemas (workstream C)
 - `docs/features-backlog.md` — deferred features

@@ -10,7 +10,7 @@ Python tool bridge. Both route to the same Go implementation.
 
 ## Factory Query API & Tool Bridge
 
-**Context:** A3 (`mindspore-code-refactor-3.md`) builds the factory store and updater.
+**Context:** A3 (`mindspore-cli-refactor-3.md`) builds the factory store and updater.
 This feature adds a query CLI that Python tools (and other consumers) can
 call for search/get/list operations.
 

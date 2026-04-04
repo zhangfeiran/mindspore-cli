@@ -49,7 +49,7 @@ go run ./cmd/mscli
 This summary matches the current tree in this checkout.
 
 ```text
-mindspore-code/
+mindspore-cli/
   cmd/mscli/              process entrypoint
   internal/app/            bootstrap, wiring, commands, startup, train flow, prompt recall persistence
   internal/project/        roadmap and weekly helpers

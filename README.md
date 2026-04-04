@@ -1,204 +1,112 @@
-# mscli
+# MindSpore CLI
 
-AI Infra Agent
+**AI Agent for Training, Debugging, and Development**
+
+An open-source terminal agent that helps ML engineers train models, diagnose failures, migrate code, and optimize performance — powered by LLMs with built-in domain skills for the MindSpore and AI infrastructure ecosystem.
+
+<!-- TODO: Add demo GIF/screenshot here -->
+
+## Why MindSpore CLI?
+
+- **Domain-aware** — Built-in skills for accuracy diagnosis, model migration, operator development, performance analysis, and training readiness
+- **Works with any LLM** — OpenAI, Anthropic, DeepSeek, Kimi, OpenRouter, or local models
+- **Zero config start** — Free model included, or bring your own API key
+- **Full tool access** — Bash, file read/write/edit, grep, glob — all from the chat
+- **Permission control** — Safe commands auto-allowed, dangerous ones require approval
+- **Session persistence** — Resume where you left off with `mscli --resume`
 
 ## Install
-
-### One-liner (public mirror)
 
 ```bash
 curl -fsSL http://47.115.175.134/mscli/install.sh | bash
 ```
 
-Optional overrides:
+Or build from source (Go 1.24.2+):
 
 ```bash
-# Force one source instead of auto-probing.
-MSCLI_INSTALL_SOURCE=github curl -fsSL http://47.115.175.134/mscli/install.sh | bash
-MSCLI_INSTALL_SOURCE=mirror curl -fsSL http://47.115.175.134/mscli/install.sh | bash
-
-# Override the mirror base URL if you host your own Caddy/Nginx mirror.
-MSCLI_MIRROR_BASE_URL=http://47.115.175.134/mscli/releases curl -fsSL http://47.115.175.134/mscli/install.sh | bash
-```
-
-### One-liner (GitHub raw, internal use)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/vigo999/mindspore-code/main/scripts/install.sh | bash
-```
-
-### Build from source
-
-Requires Go 1.24.2+.
-
-```bash
-git clone https://github.com/vigo999/mindspore-code.git
-cd mindspore-code
-go build -o mscli ./cmd/mscli
-./mscli
+git clone https://github.com/vigo999/mindspore-cli.git
+cd mindspore-cli && go build -o mscli ./cmd/mscli && ./mscli
 ```
 
 ## Quick Start
 
+**Use the free built-in model (zero config):**
 ```bash
-# Set your LLM API key
-export MSCLI_API_KEY=sk-...
+mscli
+# Choose "mscli-provided" → "kimi-k2.5 [free]" on first run
+```
 
-# Run
+**Bring your own API key:**
+```bash
+export MSCLI_API_KEY=sk-...
+export MSCLI_MODEL=deepseek-chat
 mscli
 ```
 
-### Slash Commands
-
-| Command | Description |
-|---------|-------------|
-| `/project` | Show project status (overview, milestones, tasks, support) |
-| `/project add tasks "title" --owner X --due 03-25` | Add a task (admin) |
-| `/project add milestones "title" --progress 50` | Add a milestone (admin) |
-| `/project add support "feature name"` | Add a support entry (admin) |
-| `/project update <id> --progress 80` | Update a task by ID (admin) |
-| `/project update "title" --progress 80` | Update a milestone by title (admin) |
-| `/project rm <id\|title>` | Remove an item (admin) |
-| `/project overview --phase X --owner Y` | Edit project overview (admin) |
-| `/bugs` | List bugs |
-| `/report <title>` | Report a bug |
-| `/claim <id>` | Claim a bug |
-| `/dock` | Show bug dashboard |
-| `/login <token>` | Login to the bug/project server |
-| `/model <provider:model>` | Switch LLM model |
-| `/clear` | Clear chat |
-
-### `@file` Input Expansion
-
-`ms-cli` supports inline file expansion for plain chat input and these text-tail commands:
-
-- `/report`
-- `/diagnose`
-- `/fix`
-- `/skill <name> ...`
-- direct skill aliases such as `/pdf ...`
-
-Use a standalone workspace-relative token like `@docs/bug.md` to inline a text file into the prompt.
-Use `@@name` to keep a literal `@name` token.
-
-v1 limits:
-
-- only standalone whitespace-delimited `@relative/path` tokens are expanded
-- paths with spaces are not supported
-- files must stay inside the current workspace
-- files must be UTF-8 text without NUL bytes
-- files larger than `64 KiB` are rejected
-- any invalid `@file` reference fails the whole input
-
-### Server Setup
-
-The bug and project server runs separately:
-
+**Use with OpenAI / Anthropic / OpenRouter:**
 ```bash
-# Build and deploy
-go build -o /opt/mscli/ms-cli-server ./cmd/ms-cli-server
+# OpenAI
+export MSCLI_PROVIDER=openai-completion MSCLI_API_KEY=sk-... MSCLI_MODEL=gpt-4o
 
-# Start with config
-cd /opt/mscli && ./ms-cli-server -config ./server.yaml
+# Anthropic
+export MSCLI_PROVIDER=anthropic MSCLI_API_KEY=sk-ant-... MSCLI_MODEL=claude-sonnet-4-20250514
+
+# OpenRouter (100+ models)
+export MSCLI_PROVIDER=openai-completion MSCLI_API_KEY=sk-or-... MSCLI_BASE_URL=https://openrouter.ai/api/v1
+
+mscli
 ```
 
-See `configs/server.yaml` for server configuration (auth tokens, database, listen address).
+## Features
+
+| | Feature | Description |
+|---|---|---|
+| | Streaming TUI | Live agent output, tool results, and thinking indicators |
+| | `@file` references | `explain @go.mod` — inline workspace files in chat |
+| | Tool output viewer | Ctrl+O to expand collapsed results in a scrollable view |
+| | Smart permissions | `ls`, `cat`, `git` auto-allowed; `rm -rf` always asks |
+| | Context management | `/compact` to free space, auto-compaction when needed |
+| | Session resume | `mscli --resume` to continue the last conversation |
+| | Multi-line input | Ctrl+J or `\`+Enter for newlines without submitting |
+
+## Built-in Skills
+
+| Skill | What it does |
+|---|---|
+| accuracy-agent | Diagnose numerical drift, precision mismatches, cross-platform accuracy regressions |
+| algorithm-agent | Adapt algorithms from papers or reference implementations into existing models |
+| api-helper | Answer MindSpore API questions (tensor ops, forward/backward, CPU/GPU) |
+| failure-agent | Diagnose training and runtime failures across MindSpore and PyTorch |
+| model-agent | Migrate model implementations into the MindSpore ecosystem |
+| operator-agent | Build custom operators through framework-native or integration approaches |
+| performance-agent | Diagnose latency, throughput, memory, dataloader, and communication bottlenecks |
+| readiness-agent | Check whether a workspace is ready to train or run inference |
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `/model` | Switch model or provider |
+| `/compact` | Free up context space |
+| `/clear` | Fresh conversation |
+| `/permissions` | Manage tool access |
+| `/diagnose` | Investigate issues |
+| `/fix` | Apply fixes |
+| `/bugs` | Manage bugs |
+| `/issues` | Manage issues |
+| `/report` | Submit feedback |
+| `/help` | Show all commands |
 
 ## Documentation
 
-- Architecture: [`docs/arch.md`](docs/arch.md)
-- Contributor guide: [`docs/agent-contributor-guide.md`](docs/agent-contributor-guide.md)
-- Implementation plans: [`docs/impl-guide/`](docs/impl-guide/)
-- Feature backlog: [`docs/features-backlog.md`](docs/features-backlog.md)
+- [Architecture](docs/arch.md)
+- [Contributor Guide](docs/agent-contributor-guide.md)
+- [Feature Backlog](docs/features-backlog.md)
 
-### Command-Line Options
+## Contributing
 
-```bash
-# Select URL and model
-./ms-cli --url https://api.openai.com/v1 --model gpt-4o
+See the [Contributor Guide](docs/agent-contributor-guide.md) for code style, dependency rules, and testing conventions.
 
-# Set API key directly
-./ms-cli --api-key sk-xxx
-```
+## License
 
-## LLM API Configuration
-
-`ms-cli` supports three provider modes:
-
-- `openai-completion`: OpenAI Chat Completions API and compatible gateways (default)
-- `openai-responses`: OpenAI Responses API
-- `anthropic`: Anthropic Messages API protocol
-
-Provider routing is fully configuration-driven (no runtime protocol probing).
-
-### Configuration sources
-
-Runtime config now comes from:
-
-1. built-in defaults
-2. environment variables: `MSCLI_*`
-3. session overrides (`/model` in the current process only, not persisted)
-
-`~/.ms-cli/config.yaml` and `./.ms-cli/config.yaml` are no longer read.
-The shared skills repo URL and branch are built into the binary.
-
-### Environment variables
-
-Use unified `MSCLI_*` names:
-
-- `MSCLI_PROVIDER`
-- `MSCLI_MODEL`
-- `MSCLI_API_KEY`
-- `MSCLI_BASE_URL`
-- `MSCLI_TEMPERATURE`
-- `MSCLI_MAX_TOKENS`
-- `MSCLI_TIMEOUT`
-- `MSCLI_CONTEXT_WINDOW`
-
-CLI flags `--api-key`, `--url`, `--model` are startup overrides for the current run.
-
-
-
-### Model token defaults (auto + override)
-
-When `model.model` matches known families (`gpt-5` ~ `gpt-5.4`, `claude-4.5` ~ `claude-4.6`, `glm-4.7*`, `glm-5*`, `kimi-k2*`, `kimi-k2.5*`, `minimax-m2.5*`, `minimax-m2.7*`, `deepseek*`, `qwen3*`, `qwen3.5*`), ms-cli auto-fills:
-
-- `model.max_tokens`
-- `context.window`
-
-Precedence is:
-
-1. `MSCLI_MAX_TOKENS` / `MSCLI_CONTEXT_WINDOW`
-2. auto defaults from model name
-3. built-in defaults
-### Use OpenAI API
-
-```bash
-export MSCLI_PROVIDER=openai-completion
-export MSCLI_API_KEY=sk-...
-export MSCLI_MODEL=gpt-4o-mini
-./mscli
-```
-
-If you specifically want the Responses API path, use `openai-responses`.
-
-### Use Anthropic API
-
-```bash
-export MSCLI_PROVIDER=anthropic
-export MSCLI_API_KEY=sk-ant-...
-export MSCLI_MODEL=claude-3-5-sonnet
-./mscli
-```
-
-### Use OpenRouter (OpenAI-compatible third-party routing)
-
-OpenRouter uses an OpenAI-compatible interface, so set provider to `openai-completion`:
-
-```bash
-export MSCLI_PROVIDER=openai-completion
-export MSCLI_API_KEY=sk-or-...
-export MSCLI_BASE_URL=https://openrouter.ai/api/v1
-export MSCLI_MODEL=anthropic/claude-3.5-sonnet
-./mscli
-```
+Apache-2.0 — see [LICENSE](LICENSE).
