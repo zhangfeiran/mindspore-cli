@@ -216,7 +216,6 @@ MindSpore CLI 尤其适用于：
 - 识别性能瓶颈
 - 路由迁移和适配工作
 
-详见 [docs/use-cases.md](docs/use-cases.md) 了解基于训练生命周期的视角。
 
 ---
 

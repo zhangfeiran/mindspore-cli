@@ -216,7 +216,6 @@ MindSpore CLI is especially useful for:
 - identifying performance bottlenecks
 - routing migration and adaptation work
 
-See [docs/use-cases.md](docs/use-cases.md) for a lifecycle-oriented view.
 
 ---
 
