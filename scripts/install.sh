@@ -2,8 +2,10 @@
 set -euo pipefail
 
 GITHUB_REPO="${MSCLI_GITHUB_REPO:-mindspore-lab/mindspore-cli}"
+GITCODE_REPO="${MSCLI_GITCODE_REPO:-mindspore-lab/mindspore-cli}"
 MIRROR_BASE_URL="${MSCLI_MIRROR_BASE_URL:-http://47.115.175.134/mscli/releases}"
 MIRROR_MANIFEST_URL="${MSCLI_MIRROR_MANIFEST_URL:-${MIRROR_BASE_URL%/}/latest/manifest.json}"
+GITCODE_BASE_URL="https://gitcode.com/api/v5/repos/${GITCODE_REPO}/releases"
 INSTALL_DIR="$HOME/.mscli/bin"
 BINARY_NAME="mscli"
 INSTALL_SOURCE="${MSCLI_INSTALL_SOURCE:-auto}"
@@ -108,6 +110,16 @@ latest_from_github() {
   normalize_tag "$tag"
 }
 
+latest_from_gitcode() {
+  local tag
+
+  tag="$(fetch_json "${GITCODE_BASE_URL}/latest" | json_release_tag)"
+  if [ -z "$tag" ]; then
+    return 1
+  fi
+  normalize_tag "$tag"
+}
+
 resolve_latest() {
   local latest=""
 
@@ -119,19 +131,29 @@ resolve_latest() {
         printf '%s\n' "$latest"
         return 0
       fi
-      echo "Mirror manifest unavailable, falling back to GitHub..." >&2
+      echo "Mirror manifest unavailable, trying GitCode..." >&2
+      latest="$(latest_from_gitcode 2>/dev/null || true)"
+      if [ -n "$latest" ]; then
+        printf '%s\n' "$latest"
+        return 0
+      fi
+      echo "GitCode unavailable, falling back to GitHub..." >&2
       latest="$(latest_from_github 2>/dev/null || true)"
       ;;
     mirror)
       echo "Resolving latest release from mirror..." >&2
       latest="$(latest_from_manifest "$MIRROR_MANIFEST_URL" 2>/dev/null || true)"
       ;;
+    gitcode)
+      echo "Resolving latest release from GitCode..." >&2
+      latest="$(latest_from_gitcode 2>/dev/null || true)"
+      ;;
     github)
       echo "Resolving latest release from GitHub..." >&2
       latest="$(latest_from_github 2>/dev/null || true)"
       ;;
     *)
-      echo "Error: unsupported MSCLI_INSTALL_SOURCE=${INSTALL_SOURCE} (expected auto|github|mirror)" >&2
+      echo "Error: unsupported MSCLI_INSTALL_SOURCE=${INSTALL_SOURCE} (expected auto|github|mirror|gitcode)" >&2
       exit 1
       ;;
   esac
@@ -195,6 +217,9 @@ pick_source() {
       github)
         url="$GITHUB_URL"
         ;;
+      gitcode)
+        url="$GITCODE_URL"
+        ;;
       mirror)
         url="$MIRROR_URL"
         ;;
@@ -242,11 +267,12 @@ echo "Latest release: ${LATEST}"
 
 ASSET="mscli-${OS}-${ARCH}"
 GITHUB_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST}/${ASSET}"
+GITCODE_URL="https://gitcode.com/${GITCODE_REPO}/releases/download/${LATEST}/${ASSET}"
 MIRROR_URL="${MIRROR_BASE_URL%/}/${LATEST}/${ASSET}"
 
 case "$INSTALL_SOURCE" in
   auto)
-    if ! selection="$(pick_source github mirror)"; then
+    if ! selection="$(pick_source mirror gitcode github)"; then
       echo "Error: could not reach any release download source" >&2
       exit 1
     fi
@@ -254,6 +280,12 @@ case "$INSTALL_SOURCE" in
   github)
     if ! selection="$(pick_source github)"; then
       echo "Error: GitHub release download is unavailable" >&2
+      exit 1
+    fi
+    ;;
+  gitcode)
+    if ! selection="$(pick_source gitcode)"; then
+      echo "Error: GitCode release download is unavailable" >&2
       exit 1
     fi
     ;;
