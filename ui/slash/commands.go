@@ -172,12 +172,6 @@ func (r *Registry) registerDefaults() {
 	})
 
 	r.Register(Command{
-		Name:        "/test",
-		Description: "Test API connectivity",
-		Usage:       "/test",
-	})
-
-	r.Register(Command{
 		Name:        "/permissions",
 		Description: "Open permissions view",
 		Usage:       "/permissions",
@@ -191,8 +185,8 @@ func (r *Registry) registerDefaults() {
 
 	r.Register(Command{
 		Name:        "/train",
-		Description: "Start or control the train HUD workflow",
-		Usage:       "/train <model> <method> | /train <action>",
+		Description: "Coming soon",
+		Usage:       "/train",
 	})
 
 	r.Register(Command{
@@ -215,21 +209,15 @@ func (r *Registry) registerDefaults() {
 	})
 
 	r.Register(Command{
-		Name:        "/skill-update",
-		Description: "Update shared skills repo",
-		Usage:       "/skill-update",
-	})
-
-	r.Register(Command{
 		Name:        "/login",
 		Description: "Log in to the bug server",
 		Usage:       "/login <token>",
 	})
 
 	r.Register(Command{
-		Name:        "/report",
+		Name:        "/feedback",
 		Description: "Report a bug or issue",
-		Usage:       "/report [tags] <title> | /report acc|fail|perf <title>",
+		Usage:       "/feedback [tags] <title> | /feedback acc|fail|perf <title>",
 	})
 
 	r.Register(Command{
@@ -238,11 +226,6 @@ func (r *Registry) registerDefaults() {
 		Usage:       "/issues [status]",
 	})
 
-	r.Register(Command{
-		Name:        "/status",
-		Description: "Update issue status",
-		Usage:       "/status <ISSUE-id> <ready|doing|closed>",
-	})
 
 	r.Register(Command{
 		Name:        "/diagnose",
@@ -281,15 +264,9 @@ func (r *Registry) registerDefaults() {
 	})
 
 	r.Register(Command{
-		Name:        "/dock",
+		Name:        "/now",
 		Description: "Show bug dashboard",
-		Usage:       "/dock",
-	})
-
-	r.Register(Command{
-		Name:        "/help",
-		Description: "Show available commands",
-		Usage:       "/help",
+		Usage:       "/now",
 	})
 }
 

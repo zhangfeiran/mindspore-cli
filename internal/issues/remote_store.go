@@ -51,7 +51,7 @@ func (r *RemoteStore) do(method, path string, body any) ([]byte, int, error) {
 	}
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("Server not available.")
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(resp.Body)

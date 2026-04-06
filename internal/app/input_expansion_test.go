@@ -169,7 +169,7 @@ func TestHandleCommandReportExpandsOnlyTitleRemainder(t *testing.T) {
 		issueUser:    "alice",
 	}
 
-	app.handleCommand(`/report accuracy @ctx.txt`)
+	app.handleCommand(`/feedback accuracy @ctx.txt`)
 
 	drainUntilEventType(t, app, model.AgentReply)
 	if got := store.lastCreateKind; got != issuepkg.KindAccuracy {
@@ -192,7 +192,7 @@ func TestHandleCommandReportBadReferenceFailsWholeInput(t *testing.T) {
 		issueUser:    "alice",
 	}
 
-	app.handleCommand(`/report accuracy @missing.txt`)
+	app.handleCommand(`/feedback accuracy @missing.txt`)
 
 	ev := drainUntilEventType(t, app, model.ToolError)
 	if !strings.Contains(ev.Message, "Failed to expand @file input") {

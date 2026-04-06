@@ -146,6 +146,7 @@ func TestProcessInputKeepsPlainChatGlobalDuringTrainMode(t *testing.T) {
 }
 
 func TestProcessInputUsesSlashTrainControlsForActiveWorkspace(t *testing.T) {
+	t.Skip("/train is stubbed as coming soon")
 	app := newTestApp(t)
 	app.trainMode = true
 	app.trainPhase = "ready"

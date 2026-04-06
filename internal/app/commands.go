@@ -34,19 +34,18 @@ func (a *Application) handleCommand(input string) {
 		a.cmdCompact()
 	case "/clear":
 		a.cmdClear()
-	case "/test":
-		a.cmdTest()
 	case "/permissions":
 		a.cmdPermissions(nil)
 	case "/yolo":
 		a.cmdYolo()
 	case "/train":
-		a.cmdTrain(args)
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Coming soon."}
+		return
 	case "/project":
 		a.cmdProjectInput(cmd.Remainder)
 	case "/login":
 		a.cmdLogin(args)
-	case "/report":
+	case "/feedback":
 		expanded, err := a.expandReportInput(cmd.Remainder)
 		if err != nil {
 			a.emitInputExpansionError(err)
@@ -61,8 +60,6 @@ func (a *Application) handleCommand(input string) {
 		a.cmdIssueNoteInput(cmd.Remainder)
 	case "/__issue_claim":
 		a.cmdIssueClaim(args)
-	case "/status":
-		a.cmdIssueStatus(args)
 	case "/diagnose":
 		expanded, err := a.expandIssueCommandInput(cmd.Remainder)
 		if err != nil {
@@ -92,7 +89,7 @@ func (a *Application) handleCommand(input string) {
 		a.cmdClaim(args)
 	case "/close":
 		a.cmdClose(args)
-	case "/dock":
+	case "/now":
 		a.cmdDock()
 	case "/skill":
 		if err := a.handleRawSkillCommand(cmd.Remainder); err != nil {
@@ -100,8 +97,6 @@ func (a *Application) handleCommand(input string) {
 		}
 	case "/skill-add":
 		a.cmdSkillAddInput(cmd.Remainder)
-	case "/help":
-		a.cmdHelp()
 	default:
 		if cmd.Name == "/permission" {
 			a.EventCh <- model.Event{
@@ -118,7 +113,7 @@ func (a *Application) handleCommand(input string) {
 		}
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
-			Message: fmt.Sprintf("Unknown command: %s. Type /help for available commands.", cmd.Name),
+			Message: fmt.Sprintf("Unknown command: %s. Type / to see available commands.", cmd.Name),
 		}
 	}
 }
@@ -478,33 +473,6 @@ func (a *Application) cmdCompact() {
 
 func (a *Application) cmdClear() {
 	a.EventCh <- model.Event{Type: model.ClearScreen, Message: "Chat history cleared."}
-}
-
-func (a *Application) cmdTest() {
-	a.EventCh <- model.Event{Type: model.AgentThinking}
-
-	modelName := a.Config.Model.Model
-	url := a.Config.Model.URL
-	if url == "" {
-		url = "https://api.openai.com/v1"
-	}
-	apiKeyStatus := "not set"
-	if a.Config.Model.Key != "" {
-		apiKeyStatus = fmt.Sprintf("set (%d chars)", len(a.Config.Model.Key))
-	}
-
-	msg := fmt.Sprintf("API Connection Test:\n\n  URL:     %s\n  Model:   %s\n  API Key: %s\n\nTesting connectivity...",
-		url, modelName, apiKeyStatus)
-	a.EventCh <- model.Event{Type: model.AgentReply, Message: msg}
-
-	if a.Engine != nil && a.llmReady {
-		a.EventCh <- model.Event{
-			Type:    model.AgentReply,
-			Message: "API configuration looks correct. Send a message to test the connection.",
-		}
-	} else {
-		a.EventCh <- model.Event{Type: model.AgentReply, Message: provideAPIKeyFirstMsg}
-	}
 }
 
 func (a *Application) cmdPermissions(args []string) {
@@ -913,80 +881,3 @@ func defaultSkillRequest(skillName string) string {
 	)
 }
 
-func (a *Application) cmdHelp() {
-	helpText := `Available commands:
-
-  /skill [name] [request] Load and run a skill; omit request to start immediately
-  /skill-add <path|git-url|owner/repo>  Add skills into ~/.mscli/skills
-  /train <model> <method> Start train workflow (e.g. /train qwen3 lora)
-  /train <action>         Control active train HUD (start, stop, analyze, apply fix, retry, view diff, exit)
-  /project [status]        Show project status snapshot (server + git status)
-  /project add <section> "<title>" [--owner o] [--progress p]  Add a task
-  /project update <section> <id> [--title t] [--owner o] [--progress p] [--status s]  Update a task
-  /project rm <section> <id>  Remove a task
-  /login <token>          Log in to the bug server
-  /report [ui,train] <title>  Report a new bug with optional tags
-  /issues [status]         List issues (optional status filter: ready, doing, closed)
-  /status <ISSUE-id> <ready|doing|closed>  Update an issue status
-  /diagnose <problem text|ISSUE-id>  Diagnose a problem or issue
-  /fix <problem text|ISSUE-id>  Run fix flow for a problem or issue
-  /migrate <description or repo URL>  Migrate a model to MindSpore
-  /bugs [status]          List bugs (optional status filter: open, doing)
-  /claim <id>             Claim a bug as your lead
-  /dock                   Show bug dashboard (open count, ready, recent)
-  /model [preset-id|model-name]  Open model setup or switch model
-  /test                   Test API connectivity
-  /permissions            Open permissions view
-  /yolo                   Toggle auto-approve mode
-  /exit                   Exit the application
-  /compact                Compact conversation context to save tokens
-  /clear                  Clear chat history
-  /help                   Show this help message
-
-Model Commands:
-  /model                  Open model setup (mscli-provided or your own)
-  /model kimi-k2.5-free   Switch to built-in preset directly
-  /model deepseek-v3      Switch to built-in preset directly
-  /model gpt-4o           Switch model (keeps current provider)
-  /model openai-completion:gpt-4o  Switch provider and model
-
-Permission Commands:
-  /permissions            Open permissions view
-  /yolo                   Toggle auto-approve for all operations
-
-Permission Levels:
-  ask          - Ask each time (default)
-  allow_once   - Allow once
-  allow_session - Allow for this session
-  allow_always - Always allow
-  deny         - Always deny
-
-Keybindings:
-  enter      Send input
-  shift+drag Select terminal text
-  pgup/pgdn  Scroll chat
-  home/end   Jump to top/bottom
-  /          Start a slash command
-  ctrl+c     Cancel/Quit (press twice to exit)
-
-@file Input Expansion:
-  Plain chat and /report, /diagnose, /fix, /skill, /<skill> alias support standalone @relative/path
-  Typing @path in the composer shows file completion candidates before submit
-  Use @@name to keep a literal @name token
-  @path injects a workspace file reference as an absolute path marker; the agent can read it if needed
-  Referenced paths must stay inside the workspace and point to an existing file
-  Invalid @file references fail the whole input
-
-Environment Variables:
-  MSCLI_PROVIDER          Provider (openai-completion/openai-responses/anthropic)
-  MSCLI_BASE_URL          Base URL
-  MSCLI_MODEL             Default model
-  MSCLI_API_KEY           API key
-  MSCLI_TEMPERATURE       Optional request temperature override
-  MSCLI_MAX_TOKENS        Optional request output token override
-  MSCLI_MAX_ITERATIONS    Optional agent loop iteration cap (default 100, 0 = unlimited)
-  MSCLI_CONTEXT_WINDOW    Context window tokens
-  MSCLI_TIMEOUT           Request timeout seconds`
-
-	a.EventCh <- model.Event{Type: model.AgentReply, Message: helpText}
-}
