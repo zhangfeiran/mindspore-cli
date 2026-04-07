@@ -28,6 +28,9 @@ issues.db
 debug*.log
 sse_debug.log
 
+# Local scripts
+scripts/download-stats.sh
+
 # IDE files
 .vscode/
 .cursor/
