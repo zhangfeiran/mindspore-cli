@@ -180,6 +180,41 @@ func TestRenderMessages_ToolWarningUsesWarningSummaryStyle(t *testing.T) {
 	}
 }
 
+func TestRenderMessages_EditToolUsesDiffMetaWhenPresent(t *testing.T) {
+	state := model.State{
+		Messages: []model.Message{{
+			Kind:     model.MsgTool,
+			ToolName: "Edit",
+			ToolArgs: "sample.txt",
+			Display:  model.DisplayExpanded,
+			Content:  "Edited: sample.txt\n-old\n+new",
+			Meta: map[string]any{
+				"edit_diff": map[string]any{
+					"path":   "sample.txt",
+					"header": "@@ -1,1 +1,1 @@",
+					"lines":  []string{" line-1", "-old", "+new", " line-2"},
+				},
+			},
+		}},
+	}
+
+	view := testANSIPattern.ReplaceAllString(RenderMessages(state, "", "", 80, true), "")
+	if !strings.Contains(view, "✓ Edit(sample.txt)") {
+		t.Fatalf("expected edit tool call line, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Edited: sample.txt") {
+		t.Fatalf("expected edit summary from metadata, got:\n%s", view)
+	}
+	if !strings.Contains(view, "@@ -1,1 +1,1 @@") {
+		t.Fatalf("expected diff header from metadata, got:\n%s", view)
+	}
+	for _, want := range []string{" line-1", "-old", "+new", " line-2"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected diff line %q in rendered output, got:\n%s", want, view)
+		}
+	}
+}
+
 func TestRenderMessages_AgentReplyWithANSIBypassesMarkdown(t *testing.T) {
 	state := model.State{
 		Messages: []model.Message{{

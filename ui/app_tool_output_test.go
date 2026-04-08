@@ -243,6 +243,45 @@ func TestShellCmdOutputRendersLiveInUI(t *testing.T) {
 	}
 }
 
+func TestToolEditPreservesMetaInResolvedMessage(t *testing.T) {
+	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+
+	next, _ := app.handleEvent(model.Event{
+		Type:       model.ToolCallStart,
+		ToolName:   "edit",
+		ToolCallID: "call-edit-1",
+		Message:    "sample.txt",
+	})
+	app = next.(App)
+
+	next, _ = app.handleEvent(model.Event{
+		Type:       model.ToolEdit,
+		ToolName:   "edit",
+		ToolCallID: "call-edit-1",
+		Message:    "Edited: sample.txt\n- old\n+ new",
+		Meta: map[string]any{
+			"edit_diff": map[string]any{
+				"path":   "sample.txt",
+				"header": "@@ -1,1 +1,1 @@",
+				"lines":  []string{"-old", "+new"},
+			},
+		},
+	})
+	app = next.(App)
+
+	if len(app.state.Messages) != 1 {
+		t.Fatalf("message count = %d, want 1", len(app.state.Messages))
+	}
+	diff, ok := app.state.Messages[0].Meta["edit_diff"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected edit diff meta in resolved message, got %#v", app.state.Messages[0].Meta)
+	}
+	if got, _ := diff["path"].(string); got != "sample.txt" {
+		t.Fatalf("diff path = %q, want sample.txt", got)
+	}
+}
+
 func TestAgentReplyDeltaRendersLiveInUI(t *testing.T) {
 	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
 	app.bootActive = false

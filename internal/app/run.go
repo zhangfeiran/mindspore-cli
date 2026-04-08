@@ -723,6 +723,7 @@ func convertLoopEvent(ev loop.Event) *model.Event {
 		ToolName:   ev.ToolName,
 		ToolCallID: ev.ToolCallID,
 		Summary:    ev.Summary,
+		Meta:       ev.Meta,
 		CtxUsed:    ev.CtxUsed,
 		CtxMax:     ev.CtxMax,
 		TokensUsed: ev.TokensUsed,

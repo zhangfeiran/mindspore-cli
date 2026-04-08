@@ -611,6 +611,7 @@ func (ex *executor) addToolEvent(toolName, toolCallID string, result *tools.Resu
 	ev.ToolName = toolName
 	ev.ToolCallID = toolCallID
 	ev.Summary = result.Summary
+	ev.Meta = result.Meta
 	ex.addEvent(ev)
 }
 

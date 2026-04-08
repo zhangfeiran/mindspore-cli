@@ -1210,7 +1210,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		a.state = a.state.WithStats(stats)
 		a.state = a.resolveToolEvent(ev, model.Message{
 			Kind: model.MsgTool, ToolName: "Edit", ToolArgs: ev.Message,
-			Display: model.DisplayExpanded, Content: ev.Message,
+			Display: model.DisplayExpanded, Content: ev.Message, Summary: ev.Summary, Meta: ev.Meta,
 		})
 
 	case model.ToolWrite:
@@ -1221,7 +1221,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		a.state = a.state.WithStats(stats)
 		a.state = a.resolveToolEvent(ev, model.Message{
 			Kind: model.MsgTool, ToolName: "Write", ToolArgs: ev.Message,
-			Display: model.DisplayExpanded, Content: ev.Message,
+			Display: model.DisplayExpanded, Content: ev.Message, Summary: ev.Summary, Meta: ev.Meta,
 		})
 
 	case model.ToolSkill:
@@ -1258,6 +1258,7 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 			Display:    model.DisplayWarning,
 			Content:    ev.Message,
 			Summary:    ev.Summary,
+			Meta:       ev.Meta,
 		})
 
 	case model.ToolError:
@@ -2539,6 +2540,7 @@ func finalizeToolMessage(pending model.Message, ev model.Event) model.Message {
 			Display:    model.DisplayCollapsed,
 			Content:    ev.Message,
 			Summary:    ev.Summary,
+			Meta:       ev.Meta,
 			Streaming:  true,
 		}
 	case model.CmdFinished:
@@ -2550,6 +2552,7 @@ func finalizeToolMessage(pending model.Message, ev model.Event) model.Message {
 			Display:    model.DisplayCollapsed,
 			Content:    ev.Message,
 			Summary:    ev.Summary,
+			Meta:       ev.Meta,
 		}
 	case model.ToolEdit, model.ToolWrite:
 		return model.Message{
@@ -2560,6 +2563,7 @@ func finalizeToolMessage(pending model.Message, ev model.Event) model.Message {
 			Display:    model.DisplayExpanded,
 			Content:    ev.Message,
 			Summary:    ev.Summary,
+			Meta:       firstNonNilMeta(ev.Meta, pending.Meta),
 		}
 	case model.ToolRead:
 		return model.Message{
@@ -2570,6 +2574,7 @@ func finalizeToolMessage(pending model.Message, ev model.Event) model.Message {
 			Display:    model.DisplayCollapsed,
 			Content:    "",
 			Summary:    firstNonEmpty(ev.Summary, pending.Summary),
+			Meta:       firstNonNilMeta(ev.Meta, pending.Meta),
 		}
 	case model.ToolGrep, model.ToolGlob, model.ToolSkill:
 		return model.Message{
@@ -2580,6 +2585,7 @@ func finalizeToolMessage(pending model.Message, ev model.Event) model.Message {
 			Display:    model.DisplayCollapsed,
 			Content:    ev.Message,
 			Summary:    firstNonEmpty(ev.Summary, pending.Summary),
+			Meta:       firstNonNilMeta(ev.Meta, pending.Meta),
 		}
 	case model.ToolWarning:
 		toolName := pending.ToolName
@@ -2593,6 +2599,7 @@ func finalizeToolMessage(pending model.Message, ev model.Event) model.Message {
 			ToolArgs:   valueOrString(pending.ToolArgs, pending.Content),
 			Display:    model.DisplayWarning,
 			Content:    ev.Message,
+			Meta:       firstNonNilMeta(ev.Meta, pending.Meta),
 		}
 	case model.ToolInterrupted:
 		toolName := pending.ToolName
@@ -2614,6 +2621,7 @@ func finalizeToolMessage(pending model.Message, ev model.Event) model.Message {
 			Display:    model.DisplayWarning,
 			Content:    content,
 			Summary:    firstNonEmpty(ev.Summary, "interrupted"),
+			Meta:       firstNonNilMeta(ev.Meta, pending.Meta),
 		}
 	case model.ToolError:
 		toolName := pending.ToolName
@@ -2627,10 +2635,18 @@ func finalizeToolMessage(pending model.Message, ev model.Event) model.Message {
 			ToolArgs:   valueOrString(pending.ToolArgs, pending.Content),
 			Display:    model.DisplayError,
 			Content:    ev.Message,
+			Meta:       firstNonNilMeta(ev.Meta, pending.Meta),
 		}
 	default:
 		return pending
 	}
+}
+
+func firstNonNilMeta(primary, fallback map[string]any) map[string]any {
+	if primary != nil {
+		return primary
+	}
+	return fallback
 }
 
 func finalizeToolReplayMessage(pending model.Message, ev model.Event) model.Message {

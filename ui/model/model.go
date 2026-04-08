@@ -61,6 +61,7 @@ type Message struct {
 	ToolArgs   string
 	Display    DisplayMode
 	Summary    string // shown when collapsed, e.g. "5 matches", "23 files"
+	Meta       map[string]any
 	Pending    bool
 	Streaming  bool
 }
@@ -116,6 +117,7 @@ type Event struct {
 	ToolName    string
 	ToolCallID  string
 	Summary     string
+	Meta        map[string]any
 	ReplayWait  *ReplayWaitData
 	CtxUsed     int
 	CtxMax      int

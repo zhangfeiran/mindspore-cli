@@ -280,6 +280,31 @@ func TestConvertLoopEvent_PreservesToolCallID(t *testing.T) {
 	}
 }
 
+func TestConvertLoopEvent_PreservesMeta(t *testing.T) {
+	ev := loop.Event{
+		Type:     loop.EventToolEdit,
+		ToolName: "edit",
+		Message:  "Edited: sample.txt",
+		Summary:  "1 lines -> 1 lines",
+		Meta:     map[string]any{"edit_diff": map[string]any{"path": "sample.txt"}},
+	}
+
+	got := convertLoopEvent(ev)
+	if got == nil {
+		t.Fatal("convertLoopEvent(ToolEdit) = nil, want non-nil")
+	}
+	if got.Meta == nil {
+		t.Fatal("convertLoopEvent meta = nil, want preserved meta")
+	}
+	diff, ok := got.Meta["edit_diff"].(map[string]any)
+	if !ok {
+		t.Fatalf("convertLoopEvent meta edit_diff missing, got %#v", got.Meta)
+	}
+	if gotPath, _ := diff["path"].(string); gotPath != "sample.txt" {
+		t.Fatalf("convertLoopEvent meta path = %q, want sample.txt", gotPath)
+	}
+}
+
 func TestConvertLoopEvent_MapsToolInterrupted(t *testing.T) {
 	ev := loop.Event{
 		Type:       loop.EventToolInterrupted,
