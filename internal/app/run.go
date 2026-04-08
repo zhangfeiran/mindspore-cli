@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	agentctx "github.com/mindspore-lab/mindspore-cli/agent/context"
 	"github.com/mindspore-lab/mindspore-cli/agent/loop"
 	"github.com/mindspore-lab/mindspore-cli/agent/session"
 	"github.com/mindspore-lab/mindspore-cli/integrations/llm"
@@ -473,15 +474,34 @@ func (a *Application) emitTokenUsageSnapshot() {
 	if a == nil || a.EventCh == nil || a.ctxManager == nil {
 		return
 	}
-	usage := a.ctxManager.TokenUsage()
-	if usage.ContextWindow <= 0 {
+	details := a.displayTokenUsageDetails()
+	if details.ContextWindow <= 0 {
 		return
 	}
 	a.EventCh <- model.Event{
 		Type:    model.TokenUpdate,
-		CtxUsed: usage.Current,
-		CtxMax:  usage.ContextWindow,
+		CtxUsed: details.Current,
+		CtxMax:  details.ContextWindow,
 	}
+}
+
+func (a *Application) displayTokenUsageDetails() agentctx.TokenUsageDetails {
+	if a == nil || a.ctxManager == nil {
+		return agentctx.TokenUsageDetails{}
+	}
+
+	details := a.ctxManager.TokenUsageDetails()
+	if details.Source != agentctx.TokenUsageSourceLocalEstimate {
+		return details
+	}
+	if len(a.ctxManager.GetNonSystemMessages()) > 0 {
+		return details
+	}
+
+	details.Current = 0
+	details.LocalEstimatedTotal = 0
+	details.Available = details.ContextWindow - details.Reserved
+	return details
 }
 
 func (a *Application) addContextMessages(msgs ...llm.Message) error {

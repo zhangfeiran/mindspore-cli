@@ -43,10 +43,11 @@ type Manager struct {
 	system   *llm.Message
 	usage    TokenUsage
 
-	exactPromptTokens    int
-	exactPromptEstimate  int
-	exactPromptProvider  string
-	hasExactPromptTokens bool
+	exactSnapshotTokens   int
+	exactSnapshotEstimate int
+	exactSnapshotProvider string
+	exactSnapshotScope    ProviderTokenScope
+	hasExactSnapshot      bool
 
 	// 增强组件
 	tokenizer *Tokenizer
@@ -66,19 +67,24 @@ type TokenUsage struct {
 }
 
 type TokenUsageSource string
+type ProviderTokenScope string
 
 const (
 	TokenUsageSourceLocalEstimate TokenUsageSource = "local_estimate"
-	TokenUsageSourceProvider      TokenUsageSource = "provider_prompt_tokens"
+	TokenUsageSourceProvider      TokenUsageSource = "provider_snapshot"
+
+	ProviderTokenScopePrompt ProviderTokenScope = "prompt"
+	ProviderTokenScopeTotal  ProviderTokenScope = "total"
 )
 
 type TokenUsageDetails struct {
 	TokenUsage
-	Source               TokenUsageSource
-	Provider             string
-	ProviderPromptTokens int
-	LocalEstimatedTotal  int
-	LocalDelta           int
+	Source                 TokenUsageSource
+	Provider               string
+	ProviderSnapshotTokens int
+	ProviderTokenScope     ProviderTokenScope
+	LocalEstimatedTotal    int
+	LocalDelta             int
 }
 
 // Stats 上下文统计
@@ -130,7 +136,7 @@ func (m *Manager) SetSystemPrompt(content string) {
 
 	msg := llm.NewSystemMessage(content)
 	m.system = &msg
-	m.clearPromptTokenUsageLocked()
+	m.clearProviderTokenUsageLocked()
 
 	m.recalculateUsage()
 }
@@ -213,7 +219,7 @@ func (m *Manager) SetNonSystemMessages(msgs []llm.Message) {
 
 	m.messages = make([]llm.Message, len(msgs))
 	copy(m.messages, msgs)
-	m.clearPromptTokenUsageLocked()
+	m.clearProviderTokenUsageLocked()
 
 	m.stats.MessageCount = len(m.messages)
 	m.stats.ToolCallCount = 0
@@ -232,7 +238,7 @@ func (m *Manager) Clear() {
 	defer m.mu.Unlock()
 
 	m.messages = make([]llm.Message, 0)
-	m.clearPromptTokenUsageLocked()
+	m.clearProviderTokenUsageLocked()
 	m.recalculateUsage()
 }
 
@@ -289,16 +295,40 @@ func (m *Manager) SetContextWindowLimits(contextWindow, reserveTokens int) error
 // SetPromptTokenUsage records provider-reported prompt tokens for the current context.
 // Values <= 0 clear the provider usage and fall back to local estimation.
 func (m *Manager) SetPromptTokenUsage(provider string, promptTokens int) {
+	m.setProviderTokenUsage(provider, promptTokens, ProviderTokenScopePrompt)
+}
+
+// SetTotalTokenUsage records provider-reported total tokens for the current context.
+// Values <= 0 clear the provider usage and fall back to local estimation.
+func (m *Manager) SetTotalTokenUsage(provider string, totalTokens int) {
+	m.setProviderTokenUsage(provider, totalTokens, ProviderTokenScopeTotal)
+}
+
+// SetProviderTokenUsage records the best provider-reported usage snapshot for the current context.
+// When total tokens are available they are preferred over prompt-only snapshots.
+func (m *Manager) SetProviderTokenUsage(provider string, usage llm.Usage) {
+	switch {
+	case usage.TotalTokens > 0:
+		m.setProviderTokenUsage(provider, usage.TotalTokens, ProviderTokenScopeTotal)
+	case usage.PromptTokens > 0:
+		m.setProviderTokenUsage(provider, usage.PromptTokens, ProviderTokenScopePrompt)
+	default:
+		m.setProviderTokenUsage(provider, 0, "")
+	}
+}
+
+func (m *Manager) setProviderTokenUsage(provider string, tokens int, scope ProviderTokenScope) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if promptTokens <= 0 {
-		m.clearPromptTokenUsageLocked()
+	if tokens <= 0 {
+		m.clearProviderTokenUsageLocked()
 	} else {
-		m.exactPromptTokens = promptTokens
-		m.exactPromptEstimate = m.totalTokensLocked()
-		m.exactPromptProvider = strings.TrimSpace(provider)
-		m.hasExactPromptTokens = true
+		m.exactSnapshotTokens = tokens
+		m.exactSnapshotEstimate = m.totalTokensLocked()
+		m.exactSnapshotProvider = strings.TrimSpace(provider)
+		m.exactSnapshotScope = scope
+		m.hasExactSnapshot = true
 	}
 
 	m.recalculateUsage()
@@ -315,17 +345,18 @@ func (m *Manager) TokenUsageDetails() TokenUsageDetails {
 		Source:              TokenUsageSourceLocalEstimate,
 		LocalEstimatedTotal: localEstimatedTotal,
 	}
-	if !m.hasExactPromptTokens {
+	if !m.hasExactSnapshot {
 		return details
 	}
 
-	localDelta := localEstimatedTotal - m.exactPromptEstimate
+	localDelta := localEstimatedTotal - m.exactSnapshotEstimate
 	if localDelta < 0 {
 		localDelta = 0
 	}
 	details.Source = TokenUsageSourceProvider
-	details.Provider = m.exactPromptProvider
-	details.ProviderPromptTokens = m.exactPromptTokens
+	details.Provider = m.exactSnapshotProvider
+	details.ProviderSnapshotTokens = m.exactSnapshotTokens
+	details.ProviderTokenScope = m.exactSnapshotScope
 	details.LocalDelta = localDelta
 	return details
 }
@@ -433,7 +464,7 @@ func (m *Manager) compactToTargetLocked(targetTokens int) error {
 	}
 
 	m.messages = compacted
-	m.clearPromptTokenUsageLocked()
+	m.clearProviderTokenUsageLocked()
 	m.stats.CompactCount++
 	now := time.Now()
 	m.stats.LastCompactAt = &now
@@ -493,22 +524,23 @@ func (m *Manager) totalTokensLocked() int {
 
 func (m *Manager) currentTokensLocked() int {
 	total := m.totalTokensLocked()
-	if !m.hasExactPromptTokens {
+	if !m.hasExactSnapshot {
 		return total
 	}
 
-	delta := total - m.exactPromptEstimate
+	delta := total - m.exactSnapshotEstimate
 	if delta < 0 {
 		return total
 	}
-	return m.exactPromptTokens + delta
+	return m.exactSnapshotTokens + delta
 }
 
-func (m *Manager) clearPromptTokenUsageLocked() {
-	m.exactPromptTokens = 0
-	m.exactPromptEstimate = 0
-	m.exactPromptProvider = ""
-	m.hasExactPromptTokens = false
+func (m *Manager) clearProviderTokenUsageLocked() {
+	m.exactSnapshotTokens = 0
+	m.exactSnapshotEstimate = 0
+	m.exactSnapshotProvider = ""
+	m.exactSnapshotScope = ""
+	m.hasExactSnapshot = false
 }
 
 func (m *Manager) maxUsableTokensLocked() int {
@@ -562,7 +594,7 @@ func (m *Manager) TruncateTo(count int) {
 	}
 
 	m.messages = keepRecentMessages(m.messages, count)
-	m.clearPromptTokenUsageLocked()
+	m.clearProviderTokenUsageLocked()
 	m.recalculateUsage()
 }
 

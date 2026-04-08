@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -35,7 +36,7 @@ func TestAddToolResultWithFallbackOnOversizedContent(t *testing.T) {
 	}
 }
 
-func TestSyncContextPromptUsageFallsBackToEstimateWhenPromptTokensMissing(t *testing.T) {
+func TestSyncContextTokenUsageFallsBackToEstimateWhenProviderUsageMissing(t *testing.T) {
 	cm := ctxmanager.NewManager(ctxmanager.ManagerConfig{
 		ContextWindow:       1000,
 		ReserveTokens:       20,
@@ -49,13 +50,54 @@ func TestSyncContextPromptUsageFallsBackToEstimateWhenPromptTokensMissing(t *tes
 	engine := &Engine{ctxManager: cm}
 	ex := &executor{engine: engine}
 
-	ex.syncContextPromptUsage(llm.Usage{PromptTokens: 111})
+	ex.syncContextTokenUsage(llm.Usage{PromptTokens: 111})
 	if got := cm.TokenUsage().Current; got != 111 {
 		t.Fatalf("TokenUsage().Current with provider usage = %d, want 111", got)
 	}
 
-	ex.syncContextPromptUsage(llm.Usage{})
+	ex.syncContextTokenUsage(llm.Usage{})
 	if got := cm.TokenUsage().Current; got != estimated {
 		t.Fatalf("TokenUsage().Current after fallback = %d, want %d", got, estimated)
+	}
+}
+
+func TestHandleResponseSyncsProviderTotalUsageAfterAssistantMessage(t *testing.T) {
+	cm := ctxmanager.NewManager(ctxmanager.ManagerConfig{
+		ContextWindow:       1000,
+		ReserveTokens:       20,
+		CompactionThreshold: 0.9,
+	})
+	if err := cm.AddMessage(llm.NewUserMessage("hello")); err != nil {
+		t.Fatalf("AddMessage failed: %v", err)
+	}
+
+	engine := &Engine{ctxManager: cm}
+	ex := &executor{engine: engine}
+	resp := &llm.CompletionResponse{
+		Content: "ok",
+		Usage: llm.Usage{
+			PromptTokens:     1660,
+			CompletionTokens: 149,
+			TotalTokens:      1809,
+		},
+	}
+
+	continueLoop, err := ex.handleResponse(context.Background(), resp)
+	if err != nil {
+		t.Fatalf("handleResponse() error = %v", err)
+	}
+	if continueLoop {
+		t.Fatal("handleResponse() continueLoop = true, want false")
+	}
+
+	if got, want := cm.TokenUsage().Current, 1809; got != want {
+		t.Fatalf("TokenUsage().Current = %d, want %d", got, want)
+	}
+	details := cm.TokenUsageDetails()
+	if got, want := details.ProviderSnapshotTokens, 1809; got != want {
+		t.Fatalf("TokenUsageDetails().ProviderSnapshotTokens = %d, want %d", got, want)
+	}
+	if got, want := details.ProviderTokenScope, ctxmanager.ProviderTokenScopeTotal; got != want {
+		t.Fatalf("TokenUsageDetails().ProviderTokenScope = %q, want %q", got, want)
 	}
 }

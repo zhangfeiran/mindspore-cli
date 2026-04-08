@@ -162,14 +162,21 @@ func (c *anthropicCodec) encodeTools(tools []Tool) []anthropicTool {
 }
 
 func (c *anthropicCodec) decodeCompletionResponse(resp anthropicMessagesResponse) *CompletionResponse {
+	promptTokens := resp.Usage.promptTokens()
+	completionTokens := resp.Usage.completionTokens()
+	totalTokens := resp.Usage.totalTokens()
+	if totalTokens == 0 {
+		totalTokens = promptTokens + completionTokens
+	}
+
 	result := &CompletionResponse{
 		ID:           resp.ID,
 		Model:        resp.Model,
 		FinishReason: mapAnthropicStopReason(resp.StopReason),
 		Usage: Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      totalTokens,
 		},
 	}
 
@@ -250,8 +257,37 @@ type anthropicMessagesResponse struct {
 }
 
 type anthropicUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+func (u anthropicUsage) promptTokens() int {
+	if u.PromptTokens > 0 {
+		return u.PromptTokens
+	}
+	return u.InputTokens
+}
+
+func (u anthropicUsage) completionTokens() int {
+	if u.CompletionTokens > 0 {
+		return u.CompletionTokens
+	}
+	return u.OutputTokens
+}
+
+func (u anthropicUsage) totalTokens() int {
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
+	}
+	promptTokens := u.promptTokens()
+	completionTokens := u.completionTokens()
+	if promptTokens == 0 && completionTokens == 0 {
+		return 0
+	}
+	return promptTokens + completionTokens
 }
 
 type anthropicStreamIterator struct {
@@ -336,7 +372,7 @@ func (it *anthropicStreamIterator) Next() (*StreamChunk, error) {
 			if err := json.Unmarshal(event.Data, &payload); err != nil {
 				return nil, fmt.Errorf("decode message_start: %w", err)
 			}
-			it.promptTokens = payload.Message.Usage.InputTokens
+			it.promptTokens = payload.Message.Usage.promptTokens()
 		case "content_block_start":
 			var payload anthropicStreamContentBlockStartEvent
 			if err := json.Unmarshal(event.Data, &payload); err != nil {
@@ -366,13 +402,22 @@ func (it *anthropicStreamIterator) Next() (*StreamChunk, error) {
 			if err := json.Unmarshal(event.Data, &payload); err != nil {
 				return nil, fmt.Errorf("decode message_delta: %w", err)
 			}
+			promptTokens := payload.Usage.promptTokens()
+			if promptTokens <= 0 {
+				promptTokens = it.promptTokens
+			}
+			completionTokens := payload.Usage.completionTokens()
+			totalTokens := payload.Usage.TotalTokens
+			if totalTokens <= 0 {
+				totalTokens = promptTokens + completionTokens
+			}
 			chunk := &StreamChunk{
 				ToolCalls:    it.snapshotCompletedCalls(),
 				FinishReason: mapAnthropicStopReason(payload.Delta.StopReason),
 				Usage: &Usage{
-					PromptTokens:     it.promptTokens,
-					CompletionTokens: payload.Usage.OutputTokens,
-					TotalTokens:      it.promptTokens + payload.Usage.OutputTokens,
+					PromptTokens:     promptTokens,
+					CompletionTokens: completionTokens,
+					TotalTokens:      totalTokens,
 				},
 			}
 			return chunk, nil

@@ -198,8 +198,11 @@ func TestSetPromptTokenUsageUsesProviderTokensAndFallsBackToEstimate(t *testing.
 	if got, want := details.Provider, "openai-responses"; got != want {
 		t.Fatalf("TokenUsageDetails().Provider = %q, want %q", got, want)
 	}
-	if got, want := details.ProviderPromptTokens, 123; got != want {
-		t.Fatalf("TokenUsageDetails().ProviderPromptTokens = %d, want %d", got, want)
+	if got, want := details.ProviderSnapshotTokens, 123; got != want {
+		t.Fatalf("TokenUsageDetails().ProviderSnapshotTokens = %d, want %d", got, want)
+	}
+	if got, want := details.ProviderTokenScope, ProviderTokenScopePrompt; got != want {
+		t.Fatalf("TokenUsageDetails().ProviderTokenScope = %q, want %q", got, want)
 	}
 
 	mgr.SetPromptTokenUsage("", 0)
@@ -231,6 +234,48 @@ func TestSetPromptTokenUsageTracksAppendedMessages(t *testing.T) {
 		t.Fatalf("TokenUsage().Current after append = %d, want %d", got, want)
 	}
 	details := mgr.TokenUsageDetails()
+	if got, want := details.LocalDelta, delta; got != want {
+		t.Fatalf("TokenUsageDetails().LocalDelta = %d, want %d", got, want)
+	}
+}
+
+func TestSetProviderTokenUsagePrefersTotalTokensAndTracksAppendedMessages(t *testing.T) {
+	cfg := DefaultManagerConfig()
+	cfg.ContextWindow = 1000
+	cfg.ReserveTokens = 100
+	mgr := NewManager(cfg)
+	if err := mgr.AddMessage(llm.NewUserMessage("hello")); err != nil {
+		t.Fatalf("AddMessage failed: %v", err)
+	}
+	if err := mgr.AddMessage(llm.NewAssistantMessage("ok")); err != nil {
+		t.Fatalf("AddMessage failed: %v", err)
+	}
+
+	mgr.SetProviderTokenUsage("anthropic", llm.Usage{
+		PromptTokens:     120,
+		CompletionTokens: 15,
+		TotalTokens:      135,
+	})
+	if got, want := mgr.TokenUsage().Current, 135; got != want {
+		t.Fatalf("TokenUsage().Current = %d, want %d", got, want)
+	}
+
+	next := llm.NewToolMessage("call_1", "done")
+	delta := mgr.tokenizer.EstimateMessage(next)
+	if err := mgr.AddMessage(next); err != nil {
+		t.Fatalf("AddMessage tool failed: %v", err)
+	}
+
+	if got, want := mgr.TokenUsage().Current, 135+delta; got != want {
+		t.Fatalf("TokenUsage().Current after append = %d, want %d", got, want)
+	}
+	details := mgr.TokenUsageDetails()
+	if got, want := details.ProviderSnapshotTokens, 135; got != want {
+		t.Fatalf("TokenUsageDetails().ProviderSnapshotTokens = %d, want %d", got, want)
+	}
+	if got, want := details.ProviderTokenScope, ProviderTokenScopeTotal; got != want {
+		t.Fatalf("TokenUsageDetails().ProviderTokenScope = %q, want %q", got, want)
+	}
 	if got, want := details.LocalDelta, delta; got != want {
 		t.Fatalf("TokenUsageDetails().LocalDelta = %d, want %d", got, want)
 	}

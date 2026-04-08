@@ -486,7 +486,7 @@ func (a *Application) cmdCtx() {
 	a.emitTokenUsageSnapshot()
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
-		Message: formatContextUsageMessage(a.ctxManager.TokenUsageDetails()),
+		Message: formatContextUsageMessage(a.displayTokenUsageDetails()),
 	}
 }
 
@@ -504,13 +504,22 @@ func formatContextUsageMessage(details agentctx.TokenUsageDetails) string {
 
 	switch details.Source {
 	case agentctx.TokenUsageSourceProvider:
-		sourceLabel := "provider API prompt tokens + local delta"
+		sourceLabel := "provider API token snapshot + local delta"
+		providerTokenLabel := "Provider snapshot tokens"
+		switch details.ProviderTokenScope {
+		case agentctx.ProviderTokenScopePrompt:
+			sourceLabel = "provider API prompt tokens + local delta"
+			providerTokenLabel = "Provider prompt tokens"
+		case agentctx.ProviderTokenScopeTotal:
+			sourceLabel = "provider API total tokens + local delta"
+			providerTokenLabel = "Provider total tokens"
+		}
 		if details.Provider != "" {
-			sourceLabel = fmt.Sprintf("%s API prompt tokens + local delta", details.Provider)
+			sourceLabel = fmt.Sprintf("%s API %s tokens + local delta", details.Provider, details.ProviderTokenScope)
 		}
 		lines = append(lines,
 			"  "+sourceLabel,
-			fmt.Sprintf("  Provider prompt tokens: %d", details.ProviderPromptTokens),
+			fmt.Sprintf("  %s: %d", providerTokenLabel, details.ProviderSnapshotTokens),
 			fmt.Sprintf("  Local delta since provider snapshot: +%d", details.LocalDelta),
 			fmt.Sprintf("  Pure local estimate now: %d", details.LocalEstimatedTotal),
 		)
@@ -934,4 +943,3 @@ func defaultSkillRequest(skillName string) string {
 		skillName,
 	)
 }
-
