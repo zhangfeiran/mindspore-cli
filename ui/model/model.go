@@ -61,6 +61,7 @@ type Message struct {
 	ToolArgs   string
 	Display    DisplayMode
 	Summary    string // shown when collapsed, e.g. "5 matches", "23 files"
+	Meta       map[string]any
 	Pending    bool
 	Streaming  bool
 }
@@ -77,6 +78,7 @@ const (
 	AnalysisReady        EventType = "AnalysisReady"
 	AgentReply           EventType = "AgentReply"
 	AgentReplyDelta      EventType = "AgentReplyDelta"
+	AgentBackgroundWork  EventType = "AgentBackgroundWork"
 	PermissionPrompt     EventType = "PermissionPrompt"
 	PermissionsView      EventType = "PermissionsView"
 	AgentThinking        EventType = "AgentThinking"
@@ -90,6 +92,7 @@ const (
 	ToolEdit             EventType = "ToolEdit"
 	ToolWrite            EventType = "ToolWrite"
 	ToolSkill            EventType = "ToolSkill"
+	ToolInterrupted      EventType = "ToolInterrupted"
 	ToolWarning          EventType = "ToolWarning"
 	ToolError            EventType = "ToolError"
 	ClearScreen          EventType = "ClearScreen"
@@ -116,6 +119,7 @@ type Event struct {
 	ToolName      string
 	ToolCallID    string
 	Summary       string
+	Meta        map[string]any
 	ReplayWait    *ReplayWaitData
 	CtxUsed       int
 	CtxMax        int
