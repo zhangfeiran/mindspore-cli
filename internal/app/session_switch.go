@@ -116,6 +116,7 @@ func (a *Application) switchConversation(opts sessionSwitchOptions) {
 		a.emitToolError("session", "Failed to preserve the current conversation: %v", err)
 		return
 	}
+	shouldClearScreen := a.shouldClearScreenOnSessionSwitch()
 
 	a.interruptReplay()
 	a.interruptActiveTasks()
@@ -133,12 +134,27 @@ func (a *Application) switchConversation(opts sessionSwitchOptions) {
 		_ = previous.Close()
 	}
 
-	a.EventCh <- model.Event{
-		Type:    model.ClearScreen,
-		Message: "Conversation switched.",
-		Summary: resumeHint,
+	if shouldClearScreen {
+		a.EventCh <- model.Event{
+			Type:    model.ClearScreen,
+			Message: "Conversation switched.",
+			Summary: resumeHint,
+		}
 	}
 	a.startReplayHistory()
+}
+
+func (a *Application) shouldClearScreenOnSessionSwitch() bool {
+	if a == nil {
+		return false
+	}
+	if a.sessionLLMActivity.Load() {
+		return true
+	}
+	if a.ctxManager == nil {
+		return false
+	}
+	return len(a.ctxManager.GetNonSystemMessages()) > 0
 }
 
 func (a *Application) loadConversation(target string, replay bool) (*loadedConversation, error) {

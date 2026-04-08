@@ -195,14 +195,15 @@ type App struct {
 	suppressUserEventPrints int
 
 	// Train mode
-	trainView     model.TrainViewState
-	trainFocus    model.TrainPanelID
-	bugView       model.BugViewState
-	issueView     model.IssueViewState
-	bootActive    bool
-	bootHighlight int
-	bannerPrinted bool
-	queuedInputs  []string
+	trainView               model.TrainViewState
+	trainFocus              model.TrainPanelID
+	bugView                 model.BugViewState
+	issueView               model.IssueViewState
+	bootActive              bool
+	startupBannerSuppressed bool
+	bootHighlight           int
+	bannerPrinted           bool
+	queuedInputs            []string
 
 	permissionPrompt *permissionPromptState
 	permissionsView  *permissionsViewState
@@ -254,6 +255,12 @@ func NewReplay(ch <-chan model.Event, userCh chan<- string, version, workDir, re
 // SeedInputHistory preloads persisted prompt history into the current composer.
 func (a App) SeedInputHistory(values []string) App {
 	a.input = a.input.SeedHistory(values)
+	return a
+}
+
+// WithStartupBannerSuppressed defers the inline startup banner until the caller re-enables it.
+func (a App) WithStartupBannerSuppressed() App {
+	a.startupBannerSuppressed = true
 	return a
 }
 
@@ -793,12 +800,19 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if len(a.sessionPicker.Items) == 0 {
 				a.sessionPicker = nil
-				return a, a.syncModalAltScreen()
+				a.startupBannerSuppressed = false
+				exitAlt := a.syncModalAltScreen()
+				banner := a.maybePrintBanner()
+				if exitAlt != nil && banner != nil {
+					return a, tea.Sequence(exitAlt, banner)
+				}
+				return a, combineCmds(exitAlt, banner)
 			}
 			item := a.sessionPicker.Items[a.sessionPicker.Selected]
 			mode := a.sessionPicker.Mode
 			speed := a.sessionPicker.ReplaySpeed
 			a.sessionPicker = nil
+			a.startupBannerSuppressed = false
 			if a.userCh != nil {
 				command := "/resume " + item.ID
 				if mode == model.SessionPickerReplay {
@@ -812,9 +826,15 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				default:
 				}
 			}
-			return a, a.syncModalAltScreen()
+			exitAlt := a.syncModalAltScreen()
+			banner := a.maybePrintBanner()
+			if exitAlt != nil && banner != nil {
+				return a, tea.Sequence(exitAlt, banner)
+			}
+			return a, combineCmds(exitAlt, banner)
 		case "esc":
 			a.sessionPicker = nil
+			a.startupBannerSuppressed = false
 			exitAlt := a.syncModalAltScreen()
 			banner := a.maybePrintBanner()
 			if exitAlt != nil && banner != nil {
@@ -1338,6 +1358,8 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	case model.ClearScreen:
 		a.replayWait = nil
 		a.state = a.clearThinking()
+		a.startupBannerSuppressed = false
+		a.bannerPrinted = true
 		a.state.Messages = nil
 		a.input = a.input.ClearSlashMode()
 		a.viewport = a.viewport.Clear()
@@ -3232,7 +3254,11 @@ func (a App) View() string {
 	}
 
 	// Temporary alt screen for modal popups — render only the popup on a blank backdrop.
-	blank := strings.Repeat("\n", a.height-1)
+	blankLines := a.height - 1
+	if blankLines < 0 {
+		blankLines = 0
+	}
+	blank := strings.Repeat("\n", blankLines)
 	if a.sessionPicker != nil {
 		return panels.RenderSessionPicker(a.sessionPicker, a.width, a.height)
 	}

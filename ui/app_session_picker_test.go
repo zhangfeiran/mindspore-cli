@@ -128,3 +128,88 @@ func TestClearScreenSummaryShowsNoticeMessage(t *testing.T) {
 		t.Fatalf("message content after clear = %q", got)
 	}
 }
+
+func TestClearScreenMarksBannerPrinted(t *testing.T) {
+	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+	app.bannerPrinted = false
+
+	next, _ := app.handleEvent(model.Event{Type: model.ClearScreen})
+	app = next.(App)
+
+	if !app.bannerPrinted {
+		t.Fatal("expected clear screen to count as banner already printed")
+	}
+	if cmd := app.maybePrintBanner(); cmd != nil {
+		t.Fatal("expected no extra banner after clear screen")
+	}
+}
+
+func TestStartupBannerSuppressedBlocksEarlyBannerBeforeSessionPicker(t *testing.T) {
+	app := NewReplay(nil, nil, "test", ".", "", "demo-model", 4096).WithStartupBannerSuppressed()
+
+	next, _ := app.handleEvent(model.Event{Type: model.IssueUserUpdate, Message: "alice"})
+	app = next.(App)
+
+	if app.bannerPrinted {
+		t.Fatal("expected startup banner to stay suppressed before session picker resolves")
+	}
+}
+
+func TestSessionPickerEnterReleasesStartupBannerSuppression(t *testing.T) {
+	userCh := make(chan string, 1)
+	app := NewReplay(nil, userCh, "test", ".", "", "demo-model", 4096).WithStartupBannerSuppressed()
+	app.bootActive = false
+	app.sessionPicker = &model.SessionPicker{
+		Mode: model.SessionPickerResume,
+		Items: []model.SessionPickerItem{{
+			ID:             "sess_1",
+			CreatedAt:      time.Date(2026, time.April, 8, 9, 0, 0, 0, time.UTC),
+			UpdatedAt:      time.Date(2026, time.April, 8, 9, 30, 0, 0, time.UTC),
+			FirstUserInput: "first session",
+		}},
+	}
+	app.modalAltScreen = true
+
+	next, cmd := app.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	app = next.(App)
+
+	if cmd == nil {
+		t.Fatal("expected session picker enter to exit alt-screen and print banner")
+	}
+	if app.startupBannerSuppressed {
+		t.Fatal("expected startup banner suppression to be released on picker confirm")
+	}
+	if !app.bannerPrinted {
+		t.Fatal("expected banner to be marked printed on picker confirm")
+	}
+	if app.sessionPicker != nil {
+		t.Fatal("expected session picker to close after confirm")
+	}
+
+	select {
+	case got := <-userCh:
+		if got != "/resume sess_1" {
+			t.Fatalf("selection command = %q, want %q", got, "/resume sess_1")
+		}
+	default:
+		t.Fatal("expected session picker to submit resume command")
+	}
+}
+
+func TestViewWithZeroHeightSessionPickerDoesNotPanic(t *testing.T) {
+	app := NewReplay(nil, nil, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+	app.modalAltScreen = true
+	app.sessionPicker = &model.SessionPicker{
+		Mode: model.SessionPickerReplay,
+		Items: []model.SessionPickerItem{{
+			ID:             "sess_replay",
+			CreatedAt:      time.Date(2026, time.April, 8, 11, 0, 0, 0, time.UTC),
+			UpdatedAt:      time.Date(2026, time.April, 8, 11, 30, 0, 0, time.UTC),
+			FirstUserInput: "replay session",
+		}},
+	}
+
+	_ = app.View()
+}

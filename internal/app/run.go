@@ -95,6 +95,9 @@ func (a *Application) runReal() error {
 	if a.replayOnly || a.startupSessionPicker != nil {
 		tui = ui.NewReplay(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.Window)
 	}
+	if a.startupSessionPicker != nil {
+		tui = tui.WithStartupBannerSuppressed()
+	}
 	if history, err := loadInputHistoryForWorkdir(a.WorkDir); err == nil {
 		tui = tui.SeedInputHistory(history)
 	}

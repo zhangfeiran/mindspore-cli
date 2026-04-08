@@ -136,3 +136,71 @@ func TestCmdResumeSwitchesConversationAndShowsReturnHint(t *testing.T) {
 		t.Fatalf("replayed event order = %v, want [UserInput AgentReply]", replayed)
 	}
 }
+
+func TestCmdResumeFromEmptyConversationSkipsClearScreen(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	workDir := t.TempDir()
+	current, err := session.Create(workDir, "system prompt")
+	if err != nil {
+		t.Fatalf("create current session: %v", err)
+	}
+	if err := current.Close(); err != nil {
+		t.Fatalf("close current session: %v", err)
+	}
+
+	target, err := session.Create(workDir, "system prompt")
+	if err != nil {
+		t.Fatalf("create target session: %v", err)
+	}
+	if err := target.AppendUserInput("target conversation"); err != nil {
+		t.Fatalf("append target user input: %v", err)
+	}
+	if err := target.AppendAssistant("target reply"); err != nil {
+		t.Fatalf("append target assistant reply: %v", err)
+	}
+	if err := target.Activate(); err != nil {
+		t.Fatalf("activate target session: %v", err)
+	}
+	if err := target.Close(); err != nil {
+		t.Fatalf("close target session: %v", err)
+	}
+
+	ctxManager := agentctx.NewManager(agentctx.ManagerConfig{
+		ContextWindow: 4096,
+		ReserveTokens: 512,
+	})
+	ctxManager.SetSystemPrompt("system prompt")
+
+	app := newModelCommandTestApp()
+	app.WorkDir = workDir
+	app.session = current
+	app.ctxManager = ctxManager
+
+	app.cmdResume([]string{target.ID()})
+
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+
+	var replayed []model.EventType
+	for len(replayed) < 2 {
+		select {
+		case ev := <-app.EventCh:
+			if ev.Type == model.ClearScreen {
+				t.Fatalf("unexpected clear screen event: %#v", ev)
+			}
+			if ev.Type == model.ToolError {
+				t.Fatalf("unexpected tool error: %#v", ev)
+			}
+			if ev.Type == model.UserInput || ev.Type == model.AgentReply {
+				replayed = append(replayed, ev.Type)
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for replayed session events, got %v", replayed)
+		}
+	}
+
+	if replayed[0] != model.UserInput || replayed[1] != model.AgentReply {
+		t.Fatalf("replayed event order = %v, want [UserInput AgentReply]", replayed)
+	}
+}

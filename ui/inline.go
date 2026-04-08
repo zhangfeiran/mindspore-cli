@@ -47,7 +47,7 @@ const liveShellPreviewOutputLines = 8
 // maybePrintBanner prints the startup banner once, deferred until
 // no modal popup is blocking the normal buffer.
 func (a *App) maybePrintBanner() tea.Cmd {
-	if a.bannerPrinted || a.bootActive || a.setupPopup != nil || a.modelPicker != nil || a.sessionPicker != nil {
+	if a.bannerPrinted || a.bootActive || a.startupBannerSuppressed || a.setupPopup != nil || a.modelPicker != nil || a.sessionPicker != nil {
 		return nil
 	}
 	a.bannerPrinted = true
