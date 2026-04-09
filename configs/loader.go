@@ -101,6 +101,66 @@ func ApplyEnvOverrides(cfg *Config) {
 			contextReserveSet = true
 		}
 	}
+	if v := os.Getenv("MSCLI_TOOL_RESULT_MAX_CHARS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.ToolResultMaxChars = i
+		}
+	}
+	if v := os.Getenv("MSCLI_TOOL_RESULT_BATCH_CHARS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.ToolResultBatchChars = i
+		}
+	}
+	if v := os.Getenv("MSCLI_TOOL_RESULT_PREVIEW_BYTES"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.ToolResultPreviewBytes = i
+		}
+	}
+	if v := os.Getenv("MSCLI_MICROCOMPACT_IDLE_MINUTES"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.MicrocompactIdleMinutes = i
+		}
+	}
+	if v := os.Getenv("MSCLI_MICROCOMPACT_KEEP_RECENT"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.MicrocompactKeepRecent = i
+		}
+	}
+	if v := os.Getenv("MSCLI_AUTOCOMPACT_BUFFER_TOKENS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.AutoCompactBufferTokens = i
+		}
+	}
+	if v := os.Getenv("MSCLI_NOTES_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Context.NotesEnabled = b
+		}
+	}
+	if v := os.Getenv("MSCLI_NOTES_INIT_TOKENS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.NotesInitTokens = i
+		}
+	}
+	if v := os.Getenv("MSCLI_NOTES_UPDATE_TOKENS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.NotesUpdateTokens = i
+		}
+	}
+	if v := os.Getenv("MSCLI_NOTES_MIN_TAIL_TOKENS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.NotesMinTailTokens = i
+		}
+	}
+	if v := os.Getenv("MSCLI_NOTES_MAX_TAIL_TOKENS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.NotesMaxTailTokens = i
+		}
+	}
+	if v := os.Getenv("MSCLI_NOTES_MIN_MESSAGES"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.NotesMinMessages = i
+		}
+	}
 	if contextWindowSet && !contextReserveSet {
 		refreshContextReserveDefaults(cfg, previousContextWindow)
 	}

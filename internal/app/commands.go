@@ -494,13 +494,19 @@ func (a *Application) cmdCtx() {
 	}
 
 	a.emitTokenUsageSnapshot()
+	var compressionStats map[string]any
+	if a.ctxManager != nil {
+		if raw, ok := a.ctxManager.GetDetailedStats()["compression"].(map[string]any); ok {
+			compressionStats = raw
+		}
+	}
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
-		Message: formatContextUsageMessage(a.displayTokenUsageDetails()),
+		Message: formatContextUsageMessage(a.displayTokenUsageDetails(), compressionStats),
 	}
 }
 
-func formatContextUsageMessage(details agentctx.TokenUsageDetails) string {
+func formatContextUsageMessage(details agentctx.TokenUsageDetails, compressionStats map[string]any) string {
 	lines := []string{
 		"Context usage:",
 		"",
@@ -514,6 +520,24 @@ func formatContextUsageMessage(details agentctx.TokenUsageDetails) string {
 		if stats := formatProviderUsageStats(details.ProviderUsage, details.ProviderTokenScope); len(stats) > 0 {
 			lines = append(lines, "", "Provider usage stats:")
 			lines = append(lines, stats...)
+		}
+	}
+	if len(compressionStats) > 0 {
+		lines = append(lines, "", "Compression state:")
+		if v, ok := compressionStats["previewed_results"]; ok {
+			lines = append(lines, fmt.Sprintf("  previewed_tool_results: %v", v))
+		}
+		if v, ok := compressionStats["cleared_results"]; ok {
+			lines = append(lines, fmt.Sprintf("  cleared_tool_results: %v", v))
+		}
+		if v, ok := compressionStats["last_assistant_at"]; ok && v != nil {
+			lines = append(lines, fmt.Sprintf("  last_assistant_at: %v", v))
+		}
+		if v, ok := compressionStats["session_notes_active"]; ok {
+			lines = append(lines, fmt.Sprintf("  session_notes_active: %v", v))
+		}
+		if notes, ok := compressionStats["session_notes"].(*agentctx.SessionNotes); ok && notes != nil && !notes.UpdatedAt.IsZero() {
+			lines = append(lines, fmt.Sprintf("  session_notes_updated_at: %s", notes.UpdatedAt.Format(time.RFC3339)))
 		}
 	}
 

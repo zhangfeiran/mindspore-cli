@@ -134,6 +134,66 @@ func TestCreateDefersDiskWritesUntilActivate(t *testing.T) {
 	}
 }
 
+func TestSaveSnapshotWithCompressionPersistsCompressionState(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	workDir := t.TempDir()
+	s, err := Create(workDir, "system prompt")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	assistantAt := time.Now().Add(-time.Minute)
+	if err := s.SaveSnapshotWithCompression("system prompt", []llm.Message{
+		llm.NewUserMessage("hello"),
+	}, nil, &CompressionState{
+		LastAssistantAt: &assistantAt,
+		ToolArtifacts: []ToolArtifact{{
+			ToolCallID:   "call_1",
+			ToolName:     "shell",
+			Path:         filepath.Join(filepath.Dir(s.Path()), "tool-results", "call_1.txt"),
+			OriginalSize: 42,
+			State:        "previewed",
+			CreatedAt:    assistantAt,
+		}},
+		SessionNotes: &SessionNotesState{
+			Content:          "[Session Notes]\n\nCurrent State:\nhello",
+			UpdatedAt:        assistantAt,
+			SourceTokenCount: 123,
+		},
+	}); err != nil {
+		t.Fatalf("SaveSnapshotWithCompression failed: %v", err)
+	}
+	if err := s.Activate(); err != nil {
+		t.Fatalf("activate session: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+
+	loaded, err := LoadByID(workDir, s.ID())
+	if err != nil {
+		t.Fatalf("LoadByID failed: %v", err)
+	}
+	t.Cleanup(func() { _ = loaded.Close() })
+
+	state := loaded.CompressionSnapshot()
+	if state == nil {
+		t.Fatal("CompressionSnapshot() = nil, want state")
+	}
+	if state.LastAssistantAt == nil || !state.LastAssistantAt.Equal(assistantAt) {
+		t.Fatalf("LastAssistantAt = %v, want %v", state.LastAssistantAt, assistantAt)
+	}
+	if len(state.ToolArtifacts) != 1 {
+		t.Fatalf("tool artifact count = %d, want 1", len(state.ToolArtifacts))
+	}
+	if got, want := state.ToolArtifacts[0].ToolCallID, "call_1"; got != want {
+		t.Fatalf("ToolArtifacts[0].ToolCallID = %q, want %q", got, want)
+	}
+	if state.SessionNotes == nil || !strings.Contains(state.SessionNotes.Content, "Current State:") {
+		t.Fatalf("SessionNotes = %#v, want persisted content", state.SessionNotes)
+	}
+}
+
 func TestWorkDirKeySanitizesWindowsInvalidFilenameChars(t *testing.T) {
 	key := workDirKey(`C:\Users\alice\work\mscli`)
 

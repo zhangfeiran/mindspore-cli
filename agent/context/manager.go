@@ -12,9 +12,21 @@ import (
 
 // ManagerConfig holds the manager configuration.
 type ManagerConfig struct {
-	ContextWindow       int
-	ReserveTokens       int
-	CompactionThreshold float64
+	ContextWindow           int
+	ReserveTokens           int
+	CompactionThreshold     float64
+	ToolResultMaxChars      int
+	ToolResultBatchChars    int
+	ToolResultPreviewBytes  int
+	MicrocompactIdleMinutes int
+	MicrocompactKeepRecent  int
+	AutoCompactBufferTokens int
+	NotesEnabled            bool
+	NotesInitTokens         int
+	NotesUpdateTokens       int
+	NotesMinTailTokens      int
+	NotesMaxTailTokens      int
+	NotesMinMessages        int
 
 	// 新增配置
 	EnableSmartCompact bool            // 启用智能压缩
@@ -25,12 +37,24 @@ type ManagerConfig struct {
 // DefaultManagerConfig 返回默认配置
 func DefaultManagerConfig() ManagerConfig {
 	return ManagerConfig{
-		ContextWindow:       configs.DefaultContextWindow,
-		ReserveTokens:       configs.DefaultReserveTokens(configs.DefaultContextWindow),
-		CompactionThreshold: 0.9,
-		EnableSmartCompact:  true,
-		CompactStrategy:     CompactStrategyHybrid,
-		EnablePriority:      true,
+		ContextWindow:           configs.DefaultContextWindow,
+		ReserveTokens:           configs.DefaultReserveTokens(configs.DefaultContextWindow),
+		CompactionThreshold:     0.9,
+		ToolResultMaxChars:      configs.DefaultToolResultMaxChars,
+		ToolResultBatchChars:    configs.DefaultToolResultBatchChars,
+		ToolResultPreviewBytes:  configs.DefaultToolResultPreviewBytes,
+		MicrocompactIdleMinutes: configs.DefaultMicrocompactIdleMinutes,
+		MicrocompactKeepRecent:  configs.DefaultMicrocompactKeepRecent,
+		AutoCompactBufferTokens: configs.DefaultAutoCompactBufferTokens,
+		NotesEnabled:            true,
+		NotesInitTokens:         configs.DefaultNotesInitTokens,
+		NotesUpdateTokens:       configs.DefaultNotesUpdateTokens,
+		NotesMinTailTokens:      configs.DefaultNotesMinTailTokens,
+		NotesMaxTailTokens:      configs.DefaultNotesMaxTailTokens,
+		NotesMinMessages:        configs.DefaultNotesMinMessages,
+		EnableSmartCompact:      true,
+		CompactStrategy:         CompactStrategyHybrid,
+		EnablePriority:          true,
 	}
 }
 
@@ -58,6 +82,12 @@ type Manager struct {
 
 	// 统计
 	stats Stats
+
+	toolResultDir   string
+	lastAssistantAt *time.Time
+	toolArtifacts   map[string]ToolArtifact
+	sessionNotes    *SessionNotes
+	toolCallNames   map[string]string
 }
 
 // TokenUsage represents token usage statistics.
@@ -118,6 +148,39 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.CompactionThreshold == 0 {
 		cfg.CompactionThreshold = 0.9
 	}
+	if cfg.ToolResultMaxChars == 0 {
+		cfg.ToolResultMaxChars = configs.DefaultToolResultMaxChars
+	}
+	if cfg.ToolResultBatchChars == 0 {
+		cfg.ToolResultBatchChars = configs.DefaultToolResultBatchChars
+	}
+	if cfg.ToolResultPreviewBytes == 0 {
+		cfg.ToolResultPreviewBytes = configs.DefaultToolResultPreviewBytes
+	}
+	if cfg.MicrocompactIdleMinutes == 0 {
+		cfg.MicrocompactIdleMinutes = configs.DefaultMicrocompactIdleMinutes
+	}
+	if cfg.MicrocompactKeepRecent == 0 {
+		cfg.MicrocompactKeepRecent = configs.DefaultMicrocompactKeepRecent
+	}
+	if cfg.AutoCompactBufferTokens == 0 {
+		cfg.AutoCompactBufferTokens = configs.DefaultAutoCompactBufferTokens
+	}
+	if cfg.NotesInitTokens == 0 {
+		cfg.NotesInitTokens = configs.DefaultNotesInitTokens
+	}
+	if cfg.NotesUpdateTokens == 0 {
+		cfg.NotesUpdateTokens = configs.DefaultNotesUpdateTokens
+	}
+	if cfg.NotesMinTailTokens == 0 {
+		cfg.NotesMinTailTokens = configs.DefaultNotesMinTailTokens
+	}
+	if cfg.NotesMaxTailTokens == 0 {
+		cfg.NotesMaxTailTokens = configs.DefaultNotesMaxTailTokens
+	}
+	if cfg.NotesMinMessages == 0 {
+		cfg.NotesMinMessages = configs.DefaultNotesMinMessages
+	}
 
 	// 创建压缩器
 	compactor := NewCompactor(CompactorConfig{
@@ -125,11 +188,13 @@ func NewManager(cfg ManagerConfig) *Manager {
 	})
 
 	m := &Manager{
-		config:    cfg,
-		messages:  make([]llm.Message, 0),
-		tokenizer: NewTokenizer(),
-		compactor: compactor,
-		scorer:    NewPriorityScorer(),
+		config:        cfg,
+		messages:      make([]llm.Message, 0),
+		tokenizer:     NewTokenizer(),
+		compactor:     compactor,
+		scorer:        NewPriorityScorer(),
+		toolArtifacts: make(map[string]ToolArtifact),
+		toolCallNames: make(map[string]string),
 		usage: TokenUsage{
 			ContextWindow: cfg.ContextWindow,
 			Reserved:      cfg.ReserveTokens,
@@ -188,6 +253,15 @@ func (m *Manager) AddMessage(msg llm.Message) error {
 
 	m.recalculateUsage()
 	m.stats.MessageCount++
+	if msg.Role == "assistant" {
+		now := time.Now()
+		m.lastAssistantAt = &now
+		for _, tc := range msg.ToolCalls {
+			if id := strings.TrimSpace(tc.ID); id != "" {
+				m.toolCallNames[id] = strings.TrimSpace(tc.Function.Name)
+			}
+		}
+	}
 	if msg.Role == "tool" {
 		m.stats.ToolCallCount++
 	}
@@ -197,7 +271,19 @@ func (m *Manager) AddMessage(msg llm.Message) error {
 
 // AddToolResult adds a tool result to the context.
 func (m *Manager) AddToolResult(callID, content string) error {
-	return m.AddMessage(llm.NewToolMessage(callID, content))
+	return m.AddToolResultWithName("", callID, content)
+}
+
+// AddToolResultWithName adds a tool result to the context with the originating tool name.
+func (m *Manager) AddToolResultWithName(toolName, callID, content string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	msg, err := m.prepareToolResultMessageLocked(toolName, callID, content)
+	if err != nil {
+		return err
+	}
+	return m.addPreparedMessageLocked(msg)
 }
 
 // GetMessages returns all messages including system prompt.
@@ -231,6 +317,17 @@ func (m *Manager) SetNonSystemMessages(msgs []llm.Message) {
 	m.messages = make([]llm.Message, len(msgs))
 	copy(m.messages, msgs)
 	m.clearProviderTokenUsageLocked()
+	m.toolCallNames = make(map[string]string)
+	for _, msg := range m.messages {
+		if msg.Role != "assistant" {
+			continue
+		}
+		for _, tc := range msg.ToolCalls {
+			if id := strings.TrimSpace(tc.ID); id != "" {
+				m.toolCallNames[id] = strings.TrimSpace(tc.Function.Name)
+			}
+		}
+	}
 
 	m.stats.MessageCount = len(m.messages)
 	m.stats.ToolCallCount = 0
@@ -249,6 +346,10 @@ func (m *Manager) Clear() {
 	defer m.mu.Unlock()
 
 	m.messages = make([]llm.Message, 0)
+	m.toolArtifacts = make(map[string]ToolArtifact)
+	m.sessionNotes = nil
+	m.lastAssistantAt = nil
+	m.toolCallNames = make(map[string]string)
 	m.clearProviderTokenUsageLocked()
 	m.recalculateUsage()
 }
@@ -258,11 +359,8 @@ func (m *Manager) Compact() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	currentTokens := m.currentTokensLocked()
-	if currentTokens == 0 {
-		return nil
-	}
-	return m.compactToTargetLocked(currentTokens / 2)
+	_, err := m.prepareLocked(time.Now(), true)
+	return err
 }
 
 // TokenUsage returns current token usage.
@@ -474,6 +572,14 @@ func (m *Manager) GetDetailedStats() map[string]any {
 			"available":      m.usage.Available,
 		},
 		"stats": m.stats,
+		"compression": map[string]any{
+			"tool_result_dir":      m.toolResultDir,
+			"previewed_results":    m.countToolArtifactsByState(toolArtifactStatePreviewed),
+			"cleared_results":      m.countToolArtifactsByState(toolArtifactStateCleared),
+			"last_assistant_at":    m.lastAssistantAt,
+			"session_notes":        m.sessionNotes,
+			"session_notes_active": m.sessionNotes != nil && strings.TrimSpace(m.sessionNotes.Content) != "",
+		},
 	}
 
 	return stats
@@ -492,48 +598,13 @@ func (m *Manager) compactLocked() error {
 	if currentTokens == 0 || !m.shouldCompactLocked(0) {
 		return nil
 	}
-	return m.compactToTargetLocked(m.compactionTargetTokensLocked())
+	_, err := m.prepareLocked(time.Now(), false)
+	return err
 }
 
 func (m *Manager) compactToTargetLocked(targetTokens int) error {
-	currentTokens := m.currentTokensLocked()
-	if currentTokens == 0 {
-		return nil
-	}
-	if targetTokens <= 0 {
-		targetTokens = 1
-	}
-	if currentTokens <= targetTokens {
-		return nil
-	}
-
-	compacted := m.messages
-	if m.config.EnableSmartCompact && m.compactor != nil {
-		next, result := m.compactor.Compact(m.messages, m.system, targetTokens)
-		compacted = next
-		_ = result // 可以在日志中记录
-	} else {
-		compacted = keepRecentMessagesWithinTotalBudget(m.messages, m.system, targetTokens, m.tokenizer)
-	}
-
-	compacted = keepRecentMessagesWithinTotalBudget(compacted, m.system, targetTokens, m.tokenizer)
-	maxUsableTokens := m.maxUsableTokensLocked()
-	if estimateMessagesWithSystem(compacted, m.system, m.tokenizer) > maxUsableTokens {
-		compacted = keepRecentMessagesWithinTotalBudget(compacted, m.system, maxUsableTokens, m.tokenizer)
-	}
-
-	newTokens := estimateMessagesWithSystem(compacted, m.system, m.tokenizer)
-	if newTokens >= currentTokens {
-		return nil
-	}
-
-	m.messages = compacted
-	m.clearProviderTokenUsageLocked()
-	m.stats.CompactCount++
-	now := time.Now()
-	m.stats.LastCompactAt = &now
-	m.recalculateUsage()
-	return nil
+	_, err := m.prepareLocked(time.Now(), true)
+	return err
 }
 
 func (m *Manager) compactionThresholdPercentLocked() float64 {
@@ -621,6 +692,16 @@ func (m *Manager) countByRole(role string) int {
 		}
 	}
 	return count
+}
+
+func (m *Manager) countToolArtifactsByState(state string) int {
+	total := 0
+	for _, artifact := range m.toolArtifacts {
+		if artifact.State == state {
+			total++
+		}
+	}
+	return total
 }
 
 // SetCompactStrategy sets the compaction strategy.

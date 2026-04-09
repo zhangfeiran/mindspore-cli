@@ -2,8 +2,11 @@ package context
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mindspore-lab/mindspore-cli/integrations/llm"
 )
@@ -552,5 +555,126 @@ func TestCompactResult(t *testing.T) {
 	str := result.String()
 	if str == "" {
 		t.Error("CompactResult.String() should not be empty")
+	}
+}
+
+func TestAddToolResultWithNamePersistsLargeOutputWhenArtifactDirConfigured(t *testing.T) {
+	cfg := DefaultManagerConfig()
+	cfg.ContextWindow = 120
+	cfg.ReserveTokens = 20
+	mgr := NewManager(cfg)
+	mgr.SetToolResultArtifactDir(t.TempDir())
+
+	oversized := strings.Repeat("x", 1000)
+	if err := mgr.AddToolResultWithName("shell", "call_1", oversized); err != nil {
+		t.Fatalf("AddToolResultWithName failed: %v", err)
+	}
+
+	msgs := mgr.GetNonSystemMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("message count = %d, want 1", len(msgs))
+	}
+	if !strings.HasPrefix(msgs[0].Content, persistedToolResultOpenTag) {
+		t.Fatalf("tool result content = %q, want persisted preview", msgs[0].Content)
+	}
+
+	state := mgr.ExportCompressionState()
+	if state == nil || len(state.ToolArtifacts) != 1 {
+		t.Fatalf("tool artifact count = %d, want 1", len(state.ToolArtifacts))
+	}
+	artifact := state.ToolArtifacts[0]
+	if got, want := artifact.ToolCallID, "call_1"; got != want {
+		t.Fatalf("artifact.ToolCallID = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(artifact.Path); err != nil {
+		t.Fatalf("artifact path stat failed: %v", err)
+	}
+	data, err := os.ReadFile(artifact.Path)
+	if err != nil {
+		t.Fatalf("read artifact failed: %v", err)
+	}
+	if got, want := string(data), oversized; got != want {
+		t.Fatalf("artifact content length = %d, want %d", len(got), len(want))
+	}
+}
+
+func TestPrepareForRequestClearsOldToolResultsAfterIdle(t *testing.T) {
+	cfg := DefaultManagerConfig()
+	cfg.MicrocompactIdleMinutes = 60
+	cfg.MicrocompactKeepRecent = 1
+	cfg.ToolResultMaxChars = 0
+	cfg.ToolResultBatchChars = 0
+
+	mgr := NewManager(cfg)
+	if err := mgr.AddMessage(llm.Message{
+		Role: "assistant",
+		ToolCalls: []llm.ToolCall{
+			{ID: "call_old", Function: llm.ToolCallFunc{Name: "shell"}},
+			{ID: "call_new", Function: llm.ToolCallFunc{Name: "read"}},
+		},
+	}); err != nil {
+		t.Fatalf("AddMessage assistant failed: %v", err)
+	}
+	if err := mgr.AddToolResultWithName("shell", "call_old", "old output"); err != nil {
+		t.Fatalf("AddToolResultWithName old failed: %v", err)
+	}
+	if err := mgr.AddToolResultWithName("read", "call_new", "new output"); err != nil {
+		t.Fatalf("AddToolResultWithName new failed: %v", err)
+	}
+
+	oldAssistantAt := time.Now().Add(-2 * time.Hour)
+	mgr.RestoreCompressionState(&CompressionState{
+		LastAssistantAt: &oldAssistantAt,
+	})
+
+	result, err := mgr.PrepareForRequest(time.Now())
+	if err != nil {
+		t.Fatalf("PrepareForRequest failed: %v", err)
+	}
+	if !result.Changed {
+		t.Fatal("PrepareForRequest changed = false, want true")
+	}
+	if got, want := result.ToolResultsCleared, 1; got != want {
+		t.Fatalf("ToolResultsCleared = %d, want %d", got, want)
+	}
+
+	msgs := mgr.GetNonSystemMessages()
+	if got, want := msgs[1].Content, clearedToolResultMessage; got != want {
+		t.Fatalf("old tool result content = %q, want %q", got, want)
+	}
+	if got, want := msgs[2].Content, "new output"; got != want {
+		t.Fatalf("new tool result content = %q, want %q", got, want)
+	}
+}
+
+func TestCompactExportsSessionNotesInCompressionState(t *testing.T) {
+	cfg := DefaultManagerConfig()
+	cfg.ContextWindow = 100
+	cfg.ReserveTokens = 10
+	cfg.NotesEnabled = true
+	cfg.NotesInitTokens = 1
+	cfg.NotesUpdateTokens = 1
+	mgr := NewManager(cfg)
+	mgr.SetToolResultArtifactDir(filepath.Join(t.TempDir(), "tool-results"))
+
+	for i := 0; i < 4; i++ {
+		if err := mgr.AddMessage(llm.NewUserMessage(strings.Repeat("x", 80))); err != nil {
+			t.Fatalf("AddMessage #%d failed: %v", i+1, err)
+		}
+	}
+	if err := mgr.Compact(); err != nil {
+		t.Fatalf("Compact failed: %v", err)
+	}
+
+	state := mgr.ExportCompressionState()
+	if state == nil || state.SessionNotes == nil {
+		t.Fatal("SessionNotes = nil, want notes snapshot")
+	}
+	if !strings.Contains(state.SessionNotes.Content, "Current State:") {
+		t.Fatalf("session notes content = %q, want Current State section", state.SessionNotes.Content)
+	}
+	msgs := mgr.GetNonSystemMessages()
+	if len(msgs) == 0 || !isSessionNotesMessage(msgs[0]) {
+		t.Fatalf("first message after compact = %#v, want session notes message", msgs)
 	}
 }

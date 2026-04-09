@@ -13,6 +13,10 @@ var allowedAbsoluteHomePaths = []string{
 }
 
 func resolveSafePath(workDir, input string) (string, error) {
+	return resolveSafePathWithRoots(workDir, input, nil)
+}
+
+func resolveSafePathWithRoots(workDir, input string, extraAllowedRoots []string) (string, error) {
 	if strings.TrimSpace(input) == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -41,7 +45,7 @@ func resolveSafePath(workDir, input string) (string, error) {
 			return absPath, nil
 		}
 
-		allowed, err := isAllowedAbsolutePath(absPath)
+		allowed, err := isAllowedAbsolutePath(absPath, extraAllowedRoots)
 		if err != nil {
 			return "", err
 		}
@@ -88,13 +92,16 @@ func normalizeAllowedAbsolutePath(input string) (string, error) {
 	return filepath.Join(homeDir, filepath.FromSlash(trimmed)), nil
 }
 
-func isAllowedAbsolutePath(input string) (bool, error) {
+func isAllowedAbsolutePath(input string, extraAllowedRoots []string) (bool, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return false, fmt.Errorf("resolve home directory: %w", err)
 	}
 
-	for _, allowedRoot := range allowedAbsoluteHomePaths {
+	roots := make([]string, 0, len(allowedAbsoluteHomePaths)+len(extraAllowedRoots))
+	roots = append(roots, allowedAbsoluteHomePaths...)
+	roots = append(roots, extraAllowedRoots...)
+	for _, allowedRoot := range roots {
 		trimmed := strings.TrimPrefix(allowedRoot, "~/")
 		base := filepath.Join(homeDir, filepath.FromSlash(trimmed))
 		if pathWithinBase(base, input) {
@@ -137,4 +144,21 @@ func isIgnoredGitPath(path string) bool {
 
 func isIgnoredGitName(name string) bool {
 	return name == ".git"
+}
+
+func displayPath(workDir, target string) string {
+	baseAbs, err := filepath.Abs(workDir)
+	if err != nil {
+		return target
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return target
+	}
+	if pathWithinBase(baseAbs, targetAbs) {
+		if rel, err := filepath.Rel(baseAbs, targetAbs); err == nil {
+			return rel
+		}
+	}
+	return targetAbs
 }

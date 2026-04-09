@@ -175,6 +175,12 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 		return ex.events, err
 	}
 	ex.emitContextCompactionNotice(notice)
+	if notice, err := ex.prepareContextForRequest(); err != nil {
+		ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Prepare context error: %v", err)))
+		return ex.events, err
+	} else {
+		ex.emitContextCompactionNotice(notice)
+	}
 	ex.addEvent(NewEvent(EventTaskStarted, fmt.Sprintf("Task: %s", ex.task.Description)))
 
 	completed := false
@@ -228,6 +234,11 @@ func (ex *executor) callLLM(ctx context.Context) (*llm.CompletionResponse, error
 	defer cancel()
 
 	ex.sanitizeToolPairsBeforeRequest()
+	if notice, err := ex.prepareContextForRequest(); err != nil {
+		return nil, fmt.Errorf("prepare context: %w", err)
+	} else {
+		ex.emitContextCompactionNotice(notice)
+	}
 
 	req := &llm.CompletionRequest{
 		Messages:    ex.requestMessages(),
@@ -687,13 +698,27 @@ func (ex *executor) emitContextCompactionNotice(notice *contextCompactionNotice)
 }
 
 func (ex *executor) addToolResult(callID, content string) (*contextCompactionNotice, error) {
-	msg := llm.NewToolMessage(callID, content)
-	notice, err := ex.addContextMessage(msg)
+	beforeUsage := ex.engine.ctxManager.TokenUsage()
+	beforeCompactCount := ex.engine.ctxManager.CompactCount()
+	toolName := ""
+	if tc := ex.findToolCall(callID); tc != nil {
+		toolName = tc.Function.Name
+	}
+	err := ex.engine.ctxManager.AddToolResultWithName(toolName, callID, content)
 	if err != nil {
 		return nil, err
 	}
+	afterCompactCount := ex.engine.ctxManager.CompactCount()
+	var notice *contextCompactionNotice
+	if afterCompactCount > beforeCompactCount {
+		afterUsage := ex.engine.ctxManager.TokenUsage()
+		notice = &contextCompactionNotice{
+			BeforeTokens: beforeUsage.Current,
+			AfterTokens:  afterUsage.Current,
+		}
+	}
 	if ex.usesResponsesChain() && ex.responsesPreviousID != "" {
-		ex.responsesFollowup = append(ex.responsesFollowup, msg)
+		ex.responsesFollowup = append(ex.responsesFollowup, llm.NewToolMessage(callID, ex.engine.ctxManager.GetNonSystemMessages()[len(ex.engine.ctxManager.GetNonSystemMessages())-1].Content))
 	}
 	if ex.engine.recorder != nil && ex.engine.recorder.RecordToolResult != nil {
 		var toolCall llm.ToolCall
@@ -706,6 +731,29 @@ func (ex *executor) addToolResult(callID, content string) (*contextCompactionNot
 		}
 	}
 	return notice, nil
+}
+
+func (ex *executor) prepareContextForRequest() (*contextCompactionNotice, error) {
+	if ex.engine == nil || ex.engine.ctxManager == nil {
+		return nil, nil
+	}
+
+	result, err := ex.engine.ctxManager.PrepareForRequest(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if result.Changed {
+		if err := ex.persistSnapshot(); err != nil {
+			return nil, err
+		}
+	}
+	if !result.AutoCompacted {
+		return nil, nil
+	}
+	return &contextCompactionNotice{
+		BeforeTokens: result.BeforeTokens,
+		AfterTokens:  result.AfterTokens,
+	}, nil
 }
 
 func (ex *executor) addToolResultWithFallback(callID, content string) (*contextCompactionNotice, error) {

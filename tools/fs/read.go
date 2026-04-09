@@ -14,12 +14,16 @@ import (
 
 // ReadTool reads file contents.
 type ReadTool struct {
-	workDir string
+	workDir    string
+	extraRoots []string
 }
 
 // NewReadTool creates a new read tool.
 func NewReadTool(workDir string) *ReadTool {
-	return &ReadTool{workDir: workDir}
+	return &ReadTool{
+		workDir:    workDir,
+		extraRoots: []string{"~/.mscli/sessions"},
+	}
 }
 
 // Name returns the tool name.
@@ -67,7 +71,7 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 		return tools.ErrorResult(err), nil
 	}
 
-	fullPath, err := resolveSafePath(t.workDir, p.Path)
+	fullPath, err := resolveSafePathWithRoots(t.workDir, p.Path, t.extraRoots)
 	if err != nil {
 		return tools.ErrorResult(err), nil
 	}

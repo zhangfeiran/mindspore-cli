@@ -27,6 +27,7 @@ type loadedConversation struct {
 	systemPrompt   string
 	messages       []llm.Message
 	usageSnapshot  *session.UsageSnapshot
+	compression    *session.CompressionState
 	replayBacklog  []model.Event
 	replayTimeline []session.ReplayFrame
 }
@@ -174,6 +175,7 @@ func (a *Application) loadConversation(target string, replay bool) (*loadedConve
 		systemPrompt:   systemPrompt,
 		messages:       messages,
 		usageSnapshot:  runtimeSession.UsageSnapshot(),
+		compression:    runtimeSession.CompressionSnapshot(),
 	}
 	if replay {
 		loaded.replayTimeline = runtimeSession.PlaybackTimeline()
@@ -208,6 +210,7 @@ func (a *Application) loadReplayPathConversation(target string) (*loadedConversa
 		systemPrompt:   systemPrompt,
 		messages:       messages,
 		usageSnapshot:  source.UsageSnapshot(),
+		compression:    source.CompressionSnapshot(),
 		replayTimeline: source.PlaybackTimeline(),
 	}, nil
 }
@@ -228,9 +231,13 @@ func (a *Application) bindConversation(loaded *loadedConversation, opts sessionS
 	a.sessionStoreReady.Store(false)
 
 	if a.ctxManager != nil {
+		if a.session != nil {
+			a.ctxManager.SetToolResultArtifactDir(a.session.ToolResultsDir())
+		}
 		a.ctxManager.SetSystemPrompt(loaded.systemPrompt)
 		a.ctxManager.SetNonSystemMessages(loaded.messages)
 		restoreProviderUsageSnapshot(a.ctxManager, loaded.usageSnapshot)
+		restoreCompressionSnapshot(a.ctxManager, loaded.compression)
 	}
 
 	if permSvc, ok := a.permService.(*permission.DefaultPermissionService); ok {

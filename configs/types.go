@@ -74,12 +74,37 @@ type PermissionsConfig struct {
 
 // ContextConfig holds the context management configuration.
 type ContextConfig struct {
-	Window              int     `yaml:"window"`
-	ReserveTokens       int     `yaml:"reserve_tokens"`
-	CompactionThreshold float64 `yaml:"compaction_threshold"`
+	Window                  int     `yaml:"window"`
+	ReserveTokens           int     `yaml:"reserve_tokens"`
+	CompactionThreshold     float64 `yaml:"compaction_threshold"`
+	ToolResultMaxChars      int     `yaml:"tool_result_max_chars"`
+	ToolResultBatchChars    int     `yaml:"tool_result_batch_chars"`
+	ToolResultPreviewBytes  int     `yaml:"tool_result_preview_bytes"`
+	MicrocompactIdleMinutes int     `yaml:"microcompact_idle_minutes"`
+	MicrocompactKeepRecent  int     `yaml:"microcompact_keep_recent"`
+	AutoCompactBufferTokens int     `yaml:"autocompact_buffer_tokens"`
+	NotesEnabled            bool    `yaml:"notes_enabled"`
+	NotesInitTokens         int     `yaml:"notes_init_tokens"`
+	NotesUpdateTokens       int     `yaml:"notes_update_tokens"`
+	NotesMinTailTokens      int     `yaml:"notes_min_tail_tokens"`
+	NotesMaxTailTokens      int     `yaml:"notes_max_tail_tokens"`
+	NotesMinMessages        int     `yaml:"notes_min_messages"`
 }
 
 const DefaultContextWindow = 200000
+const (
+	DefaultToolResultMaxChars      = 50000
+	DefaultToolResultBatchChars    = 200000
+	DefaultToolResultPreviewBytes  = 2000
+	DefaultMicrocompactIdleMinutes = 60
+	DefaultMicrocompactKeepRecent  = 5
+	DefaultAutoCompactBufferTokens = 13000
+	DefaultNotesInitTokens         = 10000
+	DefaultNotesUpdateTokens       = 5000
+	DefaultNotesMinTailTokens      = 10000
+	DefaultNotesMaxTailTokens      = 40000
+	DefaultNotesMinMessages        = 5
+)
 
 // DefaultReserveTokens returns the default reserved context budget for a window.
 func DefaultReserveTokens(contextWindow int) int {
@@ -144,9 +169,21 @@ func DefaultConfig() *Config {
 			RuleSources:  map[string]string{},
 		},
 		Context: ContextConfig{
-			Window:              DefaultContextWindow,
-			ReserveTokens:       DefaultReserveTokens(DefaultContextWindow),
-			CompactionThreshold: 0.9,
+			Window:                  DefaultContextWindow,
+			ReserveTokens:           DefaultReserveTokens(DefaultContextWindow),
+			CompactionThreshold:     0.9,
+			ToolResultMaxChars:      DefaultToolResultMaxChars,
+			ToolResultBatchChars:    DefaultToolResultBatchChars,
+			ToolResultPreviewBytes:  DefaultToolResultPreviewBytes,
+			MicrocompactIdleMinutes: DefaultMicrocompactIdleMinutes,
+			MicrocompactKeepRecent:  DefaultMicrocompactKeepRecent,
+			AutoCompactBufferTokens: DefaultAutoCompactBufferTokens,
+			NotesEnabled:            true,
+			NotesInitTokens:         DefaultNotesInitTokens,
+			NotesUpdateTokens:       DefaultNotesUpdateTokens,
+			NotesMinTailTokens:      DefaultNotesMinTailTokens,
+			NotesMaxTailTokens:      DefaultNotesMaxTailTokens,
+			NotesMinMessages:        DefaultNotesMinMessages,
 		},
 		Memory: MemoryConfig{
 			Enabled:   true,
@@ -208,6 +245,36 @@ func (c *Config) Validate() error {
 	if c.Context.Window < c.Context.ReserveTokens {
 		return fmt.Errorf("window must be greater than reserve_tokens")
 	}
+	if c.Context.ToolResultMaxChars < 0 {
+		return fmt.Errorf("tool_result_max_chars must be non-negative")
+	}
+	if c.Context.ToolResultBatchChars < 0 {
+		return fmt.Errorf("tool_result_batch_chars must be non-negative")
+	}
+	if c.Context.ToolResultPreviewBytes < 0 {
+		return fmt.Errorf("tool_result_preview_bytes must be non-negative")
+	}
+	if c.Context.MicrocompactIdleMinutes < 0 {
+		return fmt.Errorf("microcompact_idle_minutes must be non-negative")
+	}
+	if c.Context.MicrocompactKeepRecent < 0 {
+		return fmt.Errorf("microcompact_keep_recent must be non-negative")
+	}
+	if c.Context.AutoCompactBufferTokens < 0 {
+		return fmt.Errorf("autocompact_buffer_tokens must be non-negative")
+	}
+	if c.Context.NotesInitTokens < 0 || c.Context.NotesUpdateTokens < 0 {
+		return fmt.Errorf("notes token thresholds must be non-negative")
+	}
+	if c.Context.NotesMinTailTokens < 0 || c.Context.NotesMaxTailTokens < 0 {
+		return fmt.Errorf("notes tail token limits must be non-negative")
+	}
+	if c.Context.NotesMaxTailTokens > 0 && c.Context.NotesMinTailTokens > c.Context.NotesMaxTailTokens {
+		return fmt.Errorf("notes_min_tail_tokens must be less than or equal to notes_max_tail_tokens")
+	}
+	if c.Context.NotesMinMessages < 0 {
+		return fmt.Errorf("notes_min_messages must be non-negative")
+	}
 
 	return nil
 }
@@ -259,15 +326,63 @@ func (c *Config) Merge(other *Config) {
 	if other.Context.CompactionThreshold != 0 {
 		c.Context.CompactionThreshold = other.Context.CompactionThreshold
 	}
+	if other.Context.ToolResultMaxChars != 0 {
+		c.Context.ToolResultMaxChars = other.Context.ToolResultMaxChars
+	}
+	if other.Context.ToolResultBatchChars != 0 {
+		c.Context.ToolResultBatchChars = other.Context.ToolResultBatchChars
+	}
+	if other.Context.ToolResultPreviewBytes != 0 {
+		c.Context.ToolResultPreviewBytes = other.Context.ToolResultPreviewBytes
+	}
+	if other.Context.MicrocompactIdleMinutes != 0 {
+		c.Context.MicrocompactIdleMinutes = other.Context.MicrocompactIdleMinutes
+	}
+	if other.Context.MicrocompactKeepRecent != 0 {
+		c.Context.MicrocompactKeepRecent = other.Context.MicrocompactKeepRecent
+	}
+	if other.Context.AutoCompactBufferTokens != 0 {
+		c.Context.AutoCompactBufferTokens = other.Context.AutoCompactBufferTokens
+	}
+	if other.Context.NotesEnabled {
+		c.Context.NotesEnabled = true
+	}
+	if other.Context.NotesInitTokens != 0 {
+		c.Context.NotesInitTokens = other.Context.NotesInitTokens
+	}
+	if other.Context.NotesUpdateTokens != 0 {
+		c.Context.NotesUpdateTokens = other.Context.NotesUpdateTokens
+	}
+	if other.Context.NotesMinTailTokens != 0 {
+		c.Context.NotesMinTailTokens = other.Context.NotesMinTailTokens
+	}
+	if other.Context.NotesMaxTailTokens != 0 {
+		c.Context.NotesMaxTailTokens = other.Context.NotesMaxTailTokens
+	}
+	if other.Context.NotesMinMessages != 0 {
+		c.Context.NotesMinMessages = other.Context.NotesMinMessages
+	}
 }
 
 // UnmarshalYAML supports both context.window and legacy context.max_tokens.
 func (c *ContextConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	type rawContextConfig struct {
-		Window              int     `yaml:"window"`
-		LegacyMaxTokens     int     `yaml:"max_tokens"`
-		ReserveTokens       int     `yaml:"reserve_tokens"`
-		CompactionThreshold float64 `yaml:"compaction_threshold"`
+		Window                  int     `yaml:"window"`
+		LegacyMaxTokens         int     `yaml:"max_tokens"`
+		ReserveTokens           int     `yaml:"reserve_tokens"`
+		CompactionThreshold     float64 `yaml:"compaction_threshold"`
+		ToolResultMaxChars      int     `yaml:"tool_result_max_chars"`
+		ToolResultBatchChars    int     `yaml:"tool_result_batch_chars"`
+		ToolResultPreviewBytes  int     `yaml:"tool_result_preview_bytes"`
+		MicrocompactIdleMinutes int     `yaml:"microcompact_idle_minutes"`
+		MicrocompactKeepRecent  int     `yaml:"microcompact_keep_recent"`
+		AutoCompactBufferTokens int     `yaml:"autocompact_buffer_tokens"`
+		NotesEnabled            *bool   `yaml:"notes_enabled"`
+		NotesInitTokens         int     `yaml:"notes_init_tokens"`
+		NotesUpdateTokens       int     `yaml:"notes_update_tokens"`
+		NotesMinTailTokens      int     `yaml:"notes_min_tail_tokens"`
+		NotesMaxTailTokens      int     `yaml:"notes_max_tail_tokens"`
+		NotesMinMessages        int     `yaml:"notes_min_messages"`
 	}
 
 	var raw rawContextConfig
@@ -281,6 +396,20 @@ func (c *ContextConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	c.ReserveTokens = raw.ReserveTokens
 	c.CompactionThreshold = raw.CompactionThreshold
+	c.ToolResultMaxChars = raw.ToolResultMaxChars
+	c.ToolResultBatchChars = raw.ToolResultBatchChars
+	c.ToolResultPreviewBytes = raw.ToolResultPreviewBytes
+	c.MicrocompactIdleMinutes = raw.MicrocompactIdleMinutes
+	c.MicrocompactKeepRecent = raw.MicrocompactKeepRecent
+	c.AutoCompactBufferTokens = raw.AutoCompactBufferTokens
+	if raw.NotesEnabled != nil {
+		c.NotesEnabled = *raw.NotesEnabled
+	}
+	c.NotesInitTokens = raw.NotesInitTokens
+	c.NotesUpdateTokens = raw.NotesUpdateTokens
+	c.NotesMinTailTokens = raw.NotesMinTailTokens
+	c.NotesMaxTailTokens = raw.NotesMaxTailTokens
+	c.NotesMinMessages = raw.NotesMinMessages
 
 	return nil
 }

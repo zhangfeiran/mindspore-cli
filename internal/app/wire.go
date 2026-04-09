@@ -234,6 +234,18 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	managerCfg.ContextWindow = config.Context.Window
 	managerCfg.ReserveTokens = config.Context.ReserveTokens
 	managerCfg.CompactionThreshold = config.Context.CompactionThreshold
+	managerCfg.ToolResultMaxChars = config.Context.ToolResultMaxChars
+	managerCfg.ToolResultBatchChars = config.Context.ToolResultBatchChars
+	managerCfg.ToolResultPreviewBytes = config.Context.ToolResultPreviewBytes
+	managerCfg.MicrocompactIdleMinutes = config.Context.MicrocompactIdleMinutes
+	managerCfg.MicrocompactKeepRecent = config.Context.MicrocompactKeepRecent
+	managerCfg.AutoCompactBufferTokens = config.Context.AutoCompactBufferTokens
+	managerCfg.NotesEnabled = config.Context.NotesEnabled
+	managerCfg.NotesInitTokens = config.Context.NotesInitTokens
+	managerCfg.NotesUpdateTokens = config.Context.NotesUpdateTokens
+	managerCfg.NotesMinTailTokens = config.Context.NotesMinTailTokens
+	managerCfg.NotesMaxTailTokens = config.Context.NotesMaxTailTokens
+	managerCfg.NotesMinMessages = config.Context.NotesMinMessages
 	ctxManager := agentctx.NewManager(managerCfg)
 
 	// Build system prompt: base + skill summaries.
@@ -274,6 +286,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 					ctxManager.SetSystemPrompt(systemPrompt)
 					ctxManager.SetNonSystemMessages(restoredMessages)
 					restoreProviderUsageSnapshot(ctxManager, sourceSession.UsageSnapshot())
+					restoreCompressionSnapshot(ctxManager, sourceSession.CompressionSnapshot())
 					replayTimeline = sourceSession.PlaybackTimeline()
 					if metaWorkDir := strings.TrimSpace(sourceSession.Meta().WorkDir); metaWorkDir != "" {
 						workDir = metaWorkDir
@@ -282,15 +295,18 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 					if err != nil {
 						return nil, fmt.Errorf("create replay session: %w", err)
 					}
+					ctxManager.SetToolResultArtifactDir(runtimeSession.ToolResultsDir())
 				} else {
 					runtimeSession, err = session.LoadByID(workDir, sessionID)
 					if err != nil {
 						return nil, fmt.Errorf("load %s %s: %w", targetLabel, sessionID, err)
 					}
 					systemPrompt, restoredMessages := runtimeSession.RestoreContext()
+					ctxManager.SetToolResultArtifactDir(runtimeSession.ToolResultsDir())
 					ctxManager.SetSystemPrompt(systemPrompt)
 					ctxManager.SetNonSystemMessages(restoredMessages)
 					restoreProviderUsageSnapshot(ctxManager, runtimeSession.UsageSnapshot())
+					restoreCompressionSnapshot(ctxManager, runtimeSession.CompressionSnapshot())
 					if cfg.Replay {
 						replayTimeline = runtimeSession.PlaybackTimeline()
 					} else {
@@ -303,9 +319,11 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 					return nil, fmt.Errorf("load latest session: %w", err)
 				}
 				systemPrompt, restoredMessages := runtimeSession.RestoreContext()
+				ctxManager.SetToolResultArtifactDir(runtimeSession.ToolResultsDir())
 				ctxManager.SetSystemPrompt(systemPrompt)
 				ctxManager.SetNonSystemMessages(restoredMessages)
 				restoreProviderUsageSnapshot(ctxManager, runtimeSession.UsageSnapshot())
+				restoreCompressionSnapshot(ctxManager, runtimeSession.CompressionSnapshot())
 				replayBacklog = runtimeSession.ReplayEvents()
 			}
 		} else {
@@ -313,6 +331,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 			if err != nil {
 				return nil, fmt.Errorf("create session: %w", err)
 			}
+			ctxManager.SetToolResultArtifactDir(runtimeSession.ToolResultsDir())
 			ctxManager.SetSystemPrompt(systemPrompt)
 		}
 	} else {
@@ -320,6 +339,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		if err != nil {
 			return nil, fmt.Errorf("create session: %w", err)
 		}
+		ctxManager.SetToolResultArtifactDir(runtimeSession.ToolResultsDir())
 		ctxManager.SetSystemPrompt(systemPrompt)
 	}
 
@@ -504,6 +524,9 @@ func (a *Application) rotateSession() error {
 	a.session = nextSession
 	a.sessionLLMActivity.Store(false)
 	a.sessionStoreReady.Store(false)
+	if a.ctxManager != nil {
+		a.ctxManager.SetToolResultArtifactDir(nextSession.ToolResultsDir())
+	}
 
 	if permSvc, ok := a.permService.(*permission.DefaultPermissionService); ok {
 		permSvc.ResetSessionState()
@@ -655,10 +678,11 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, noteLiveLLM
 			if msg := cm.GetSystemPrompt(); msg != nil {
 				systemPrompt = msg.Content
 			}
-			return s.SaveSnapshotWithUsage(
+			return s.SaveSnapshotWithCompression(
 				systemPrompt,
 				cm.GetNonSystemMessages(),
 				providerUsageSnapshotFromDetails(cm.TokenUsageDetails()),
+				compressionSnapshotFromManager(cm),
 			)
 		},
 	}

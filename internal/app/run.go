@@ -580,10 +580,11 @@ func (a *Application) persistSessionSnapshot() error {
 	if a == nil || a.session == nil || a.ctxManager == nil {
 		return nil
 	}
-	return a.session.SaveSnapshotWithUsage(
+	return a.session.SaveSnapshotWithCompression(
 		a.currentSystemPrompt(),
 		a.ctxManager.GetNonSystemMessages(),
 		providerUsageSnapshotFromDetails(a.ctxManager.TokenUsageDetails()),
+		compressionSnapshotFromManager(a.ctxManager),
 	)
 }
 

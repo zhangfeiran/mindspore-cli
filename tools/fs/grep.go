@@ -15,12 +15,16 @@ import (
 
 // GrepTool searches for patterns in files.
 type GrepTool struct {
-	workDir string
+	workDir    string
+	extraRoots []string
 }
 
 // NewGrepTool creates a new grep tool.
 func NewGrepTool(workDir string) *GrepTool {
-	return &GrepTool{workDir: workDir}
+	return &GrepTool{
+		workDir:    workDir,
+		extraRoots: []string{"~/.mscli/sessions"},
+	}
 }
 
 // Name returns the tool name.
@@ -101,7 +105,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	if p.Path != "" {
 		searchPath = p.Path
 	}
-	fullPath, err := resolveSafePath(t.workDir, searchPath)
+	fullPath, err := resolveSafePathWithRoots(t.workDir, searchPath, t.extraRoots)
 	if err != nil {
 		return tools.ErrorResult(err), nil
 	}
@@ -132,8 +136,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 
 	var lines []string
 	for _, m := range matches {
-		relPath, _ := filepath.Rel(t.workDir, m.File)
-		lines = append(lines, fmt.Sprintf("%s:%d:%s", relPath, m.Line, m.Text))
+		lines = append(lines, fmt.Sprintf("%s:%d:%s", displayPath(t.workDir, m.File), m.Line, m.Text))
 	}
 
 	summary := pagedSearchSummary(totalMatches, p.Offset, len(matches), "matches")

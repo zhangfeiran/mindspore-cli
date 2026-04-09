@@ -15,12 +15,16 @@ import (
 
 // GlobTool finds files matching a glob pattern.
 type GlobTool struct {
-	workDir string
+	workDir    string
+	extraRoots []string
 }
 
 // NewGlobTool creates a new glob tool.
 func NewGlobTool(workDir string) *GlobTool {
-	return &GlobTool{workDir: workDir}
+	return &GlobTool{
+		workDir:    workDir,
+		extraRoots: []string{"~/.mscli/sessions"},
+	}
 }
 
 // Name returns the tool name.
@@ -78,7 +82,7 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	if p.Path != "" {
 		basePath = p.Path
 	}
-	fullBasePath, err := resolveSafePath(t.workDir, basePath)
+	fullBasePath, err := resolveSafePathWithRoots(t.workDir, basePath, t.extraRoots)
 	if err != nil {
 		return tools.ErrorResult(err), nil
 	}
@@ -113,8 +117,7 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	if !info.IsDir() {
 		matched, _ := filepath.Match(pattern, filepath.Base(fullBasePath))
 		if matched {
-			relPath, _ := filepath.Rel(t.workDir, fullBasePath)
-			matches = append(matches, relPath)
+			matches = append(matches, displayPath(t.workDir, fullBasePath))
 		}
 	}
 
@@ -150,8 +153,7 @@ func (t *GlobTool) globSingle(root, pattern string) ([]string, error) {
 		}
 		matched, _ := filepath.Match(pattern, name)
 		if matched {
-			relPath, _ := filepath.Rel(t.workDir, filepath.Join(root, name))
-			matches = append(matches, relPath)
+			matches = append(matches, displayPath(t.workDir, filepath.Join(root, name)))
 		}
 	}
 
@@ -186,8 +188,7 @@ func (t *GlobTool) globRecursive(root, pattern string) ([]string, error) {
 		}
 		matched := re.MatchString(filepath.ToSlash(relFromRoot))
 		if matched {
-			relPath, _ := filepath.Rel(t.workDir, path)
-			matches = append(matches, relPath)
+			matches = append(matches, displayPath(t.workDir, path))
 		}
 
 		return nil

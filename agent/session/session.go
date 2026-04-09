@@ -19,6 +19,7 @@ import (
 const (
 	trajectoryFilename   = "trajectory.jsonl"
 	snapshotFilename     = "snapshot.json"
+	toolResultsSubdir    = "tool-results"
 	recordTypeMeta       = "session_meta"
 	recordTypeUser       = "user"
 	recordTypeAssistant  = "assistant"
@@ -55,12 +56,34 @@ type MessageRecord struct {
 
 // Snapshot stores the latest restorable context state.
 type Snapshot struct {
-	SessionID     string         `json:"session_id"`
-	WorkDir       string         `json:"workdir"`
-	SystemPrompt  string         `json:"system_prompt"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	Messages      []llm.Message  `json:"messages,omitempty"`
-	ProviderUsage *UsageSnapshot `json:"provider_usage,omitempty"`
+	SessionID     string            `json:"session_id"`
+	WorkDir       string            `json:"workdir"`
+	SystemPrompt  string            `json:"system_prompt"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+	Messages      []llm.Message     `json:"messages,omitempty"`
+	ProviderUsage *UsageSnapshot    `json:"provider_usage,omitempty"`
+	Compression   *CompressionState `json:"compression,omitempty"`
+}
+
+type CompressionState struct {
+	LastAssistantAt *time.Time         `json:"last_assistant_at,omitempty"`
+	ToolArtifacts   []ToolArtifact     `json:"tool_artifacts,omitempty"`
+	SessionNotes    *SessionNotesState `json:"session_notes,omitempty"`
+}
+
+type ToolArtifact struct {
+	ToolCallID   string    `json:"tool_call_id,omitempty"`
+	ToolName     string    `json:"tool_name,omitempty"`
+	Path         string    `json:"path,omitempty"`
+	OriginalSize int       `json:"original_size,omitempty"`
+	State        string    `json:"state,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
+}
+
+type SessionNotesState struct {
+	Content          string    `json:"content,omitempty"`
+	UpdatedAt        time.Time `json:"updated_at,omitempty"`
+	SourceTokenCount int       `json:"source_token_count,omitempty"`
 }
 
 // UsageSnapshot stores the latest provider-backed token snapshot for resume.
@@ -716,6 +739,17 @@ func (s *Session) UsageSnapshot() *UsageSnapshot {
 	return cloneUsageSnapshot(s.snapshot.ProviderUsage)
 }
 
+// CompressionSnapshot returns a copy of the persisted compression state.
+func (s *Session) CompressionSnapshot() *CompressionState {
+	if s == nil {
+		return nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneCompressionState(s.snapshot.Compression)
+}
+
 // Path returns the trajectory file path.
 func (s *Session) Path() string {
 	if s == nil {
@@ -724,6 +758,16 @@ func (s *Session) Path() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.path
+}
+
+// ToolResultsDir returns the session-local directory used for persisted tool results.
+func (s *Session) ToolResultsDir() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return filepath.Join(filepath.Dir(s.path), toolResultsSubdir)
 }
 
 // ID returns the session ID.
@@ -1028,6 +1072,12 @@ func (s *Session) SaveSnapshot(systemPrompt string, messages []llm.Message) erro
 
 // SaveSnapshotWithUsage overwrites snapshot.json with the current restorable context and usage snapshot.
 func (s *Session) SaveSnapshotWithUsage(systemPrompt string, messages []llm.Message, usage *UsageSnapshot) error {
+	return s.SaveSnapshotWithCompression(systemPrompt, messages, usage, nil)
+}
+
+// SaveSnapshotWithCompression overwrites snapshot.json with the current restorable context,
+// usage snapshot, and compression metadata.
+func (s *Session) SaveSnapshotWithCompression(systemPrompt string, messages []llm.Message, usage *UsageSnapshot, compression *CompressionState) error {
 	if s == nil {
 		return fmt.Errorf("session is nil")
 	}
@@ -1041,6 +1091,7 @@ func (s *Session) SaveSnapshotWithUsage(systemPrompt string, messages []llm.Mess
 	s.snapshot.Messages = make([]llm.Message, len(messages))
 	copy(s.snapshot.Messages, messages)
 	s.snapshot.ProviderUsage = cloneUsageSnapshot(usage)
+	s.snapshot.Compression = cloneCompressionState(compression)
 	if !s.persisted {
 		return nil
 	}
@@ -1056,6 +1107,35 @@ func cloneUsageSnapshot(usage *UsageSnapshot) *UsageSnapshot {
 		clonedUsage := usage.Usage.Clone()
 		copy.Usage = &clonedUsage
 	}
+	return &copy
+}
+
+func cloneCompressionState(state *CompressionState) *CompressionState {
+	if state == nil {
+		return nil
+	}
+	copy := &CompressionState{
+		LastAssistantAt: cloneTimePtr(state.LastAssistantAt),
+		ToolArtifacts:   make([]ToolArtifact, len(state.ToolArtifacts)),
+		SessionNotes:    cloneSessionNotesState(state.SessionNotes),
+	}
+	copy.ToolArtifacts = append(copy.ToolArtifacts[:0], state.ToolArtifacts...)
+	return copy
+}
+
+func cloneSessionNotesState(state *SessionNotesState) *SessionNotesState {
+	if state == nil {
+		return nil
+	}
+	copy := *state
+	return &copy
+}
+
+func cloneTimePtr(v *time.Time) *time.Time {
+	if v == nil {
+		return nil
+	}
+	copy := *v
 	return &copy
 }
 
