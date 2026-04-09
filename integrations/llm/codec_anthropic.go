@@ -173,11 +173,7 @@ func (c *anthropicCodec) decodeCompletionResponse(resp anthropicMessagesResponse
 		ID:           resp.ID,
 		Model:        resp.Model,
 		FinishReason: mapAnthropicStopReason(resp.StopReason),
-		Usage: Usage{
-			PromptTokens:     promptTokens,
-			CompletionTokens: completionTokens,
-			TotalTokens:      totalTokens,
-		},
+		Usage:        resp.Usage.toUsageWith(promptTokens, completionTokens, totalTokens),
 	}
 
 	var text strings.Builder
@@ -257,11 +253,34 @@ type anthropicMessagesResponse struct {
 }
 
 type anthropicUsage struct {
+	InputTokens      int             `json:"input_tokens"`
+	OutputTokens     int             `json:"output_tokens"`
+	PromptTokens     int             `json:"prompt_tokens"`
+	CompletionTokens int             `json:"completion_tokens"`
+	TotalTokens      int             `json:"total_tokens"`
+	Raw              json.RawMessage `json:"-"`
+}
+
+type anthropicUsagePayload struct {
 	InputTokens      int `json:"input_tokens"`
 	OutputTokens     int `json:"output_tokens"`
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+}
+
+func (u *anthropicUsage) UnmarshalJSON(data []byte) error {
+	var payload anthropicUsagePayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	u.InputTokens = payload.InputTokens
+	u.OutputTokens = payload.OutputTokens
+	u.PromptTokens = payload.PromptTokens
+	u.CompletionTokens = payload.CompletionTokens
+	u.TotalTokens = payload.TotalTokens
+	u.Raw = cloneRawJSON(data)
+	return nil
 }
 
 func (u anthropicUsage) promptTokens() int {
@@ -288,6 +307,15 @@ func (u anthropicUsage) totalTokens() int {
 		return 0
 	}
 	return promptTokens + completionTokens
+}
+
+func (u anthropicUsage) toUsageWith(promptTokens, completionTokens, totalTokens int) Usage {
+	return Usage{
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      totalTokens,
+		Raw:              cloneRawJSON(u.Raw),
+	}
 }
 
 type anthropicStreamIterator struct {
@@ -416,11 +444,7 @@ func (it *anthropicStreamIterator) Next() (*StreamChunk, error) {
 			chunk := &StreamChunk{
 				ToolCalls:    it.snapshotCompletedCalls(),
 				FinishReason: mapAnthropicStopReason(payload.Delta.StopReason),
-				Usage: &Usage{
-					PromptTokens:     promptTokens,
-					CompletionTokens: completionTokens,
-					TotalTokens:      totalTokens,
-				},
+				Usage:        ptrUsage(payload.Usage.toUsageWith(promptTokens, completionTokens, totalTokens)),
 			}
 			return chunk, nil
 		case "message_stop":

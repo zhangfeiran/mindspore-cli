@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -507,40 +508,142 @@ func formatContextUsageMessage(details agentctx.TokenUsageDetails) string {
 		fmt.Sprintf("  Window:    %d", details.ContextWindow),
 		fmt.Sprintf("  Reserved:  %d", details.Reserved),
 		fmt.Sprintf("  Available: %d", details.Available),
-		"",
-		"Source:",
 	}
 
-	switch details.Source {
-	case agentctx.TokenUsageSourceProvider:
-		sourceLabel := "provider API token snapshot + local delta"
-		providerTokenLabel := "Provider snapshot tokens"
-		switch details.ProviderTokenScope {
-		case agentctx.ProviderTokenScopePrompt:
-			sourceLabel = "provider API prompt tokens + local delta"
-			providerTokenLabel = "Provider prompt tokens"
-		case agentctx.ProviderTokenScopeTotal:
-			sourceLabel = "provider API total tokens + local delta"
-			providerTokenLabel = "Provider total tokens"
+	if details.Source == agentctx.TokenUsageSourceProvider {
+		if stats := formatProviderUsageStats(details.ProviderUsage, details.ProviderTokenScope); len(stats) > 0 {
+			lines = append(lines, "", "Provider usage stats:")
+			lines = append(lines, stats...)
 		}
-		if details.Provider != "" {
-			sourceLabel = fmt.Sprintf("%s API %s tokens + local delta", details.Provider, details.ProviderTokenScope)
-		}
-		lines = append(lines,
-			"  "+sourceLabel,
-			fmt.Sprintf("  %s: %d", providerTokenLabel, details.ProviderSnapshotTokens),
-			fmt.Sprintf("  Local delta since provider snapshot: +%d", details.LocalDelta),
-			fmt.Sprintf("  Pure local estimate now: %d", details.LocalEstimatedTotal),
-		)
-	default:
-		lines = append(lines,
-			"  local heuristic estimate fallback",
-			fmt.Sprintf("  Pure local estimate now: %d", details.LocalEstimatedTotal),
-			"  Method: utf8 chars / 4 plus message/tool-call overhead",
-		)
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func formatProviderUsageStats(usage llm.Usage, scope agentctx.ProviderTokenScope) []string {
+	filtered := filterProviderUsageStats(flattenUsageRaw(usage.Raw), scope)
+	if len(filtered) > 0 {
+		return filtered
+	}
+
+	lines := make([]string, 0, 3)
+	switch scope {
+	case agentctx.ProviderTokenScopeTotal:
+		if usage.PromptTokens > 0 {
+			lines = append(lines, fmt.Sprintf("  prompt_tokens: %d", usage.PromptTokens))
+		}
+	case agentctx.ProviderTokenScopePrompt:
+		if usage.CompletionTokens > 0 {
+			lines = append(lines, fmt.Sprintf("  completion_tokens: %d", usage.CompletionTokens))
+		}
+		if usage.TotalTokens > 0 {
+			lines = append(lines, fmt.Sprintf("  total_tokens: %d", usage.TotalTokens))
+		}
+	default:
+		if usage.PromptTokens > 0 {
+			lines = append(lines, fmt.Sprintf("  prompt_tokens: %d", usage.PromptTokens))
+		}
+		if usage.CompletionTokens > 0 {
+			lines = append(lines, fmt.Sprintf("  completion_tokens: %d", usage.CompletionTokens))
+		}
+		if usage.TotalTokens > 0 {
+			lines = append(lines, fmt.Sprintf("  total_tokens: %d", usage.TotalTokens))
+		}
+	}
+	return lines
+}
+
+func flattenUsageRaw(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return []string{fmt.Sprintf("  raw: %s", string(raw))}
+	}
+
+	var lines []string
+	appendFlattenedUsageStats(&lines, "", value)
+	return lines
+}
+
+func appendFlattenedUsageStats(lines *[]string, prefix string, value any) {
+	switch v := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			nextPrefix := key
+			if prefix != "" {
+				nextPrefix = prefix + "." + key
+			}
+			appendFlattenedUsageStats(lines, nextPrefix, v[key])
+		}
+	case []any:
+		if prefix == "" {
+			data, _ := json.Marshal(v)
+			*lines = append(*lines, fmt.Sprintf("  value: %s", string(data)))
+			return
+		}
+		data, _ := json.Marshal(v)
+		*lines = append(*lines, fmt.Sprintf("  %s: %s", prefix, string(data)))
+	case nil:
+		if prefix != "" {
+			*lines = append(*lines, fmt.Sprintf("  %s: null", prefix))
+		}
+	case string:
+		if prefix != "" {
+			*lines = append(*lines, fmt.Sprintf("  %s: %s", prefix, v))
+		}
+	case bool:
+		if prefix != "" {
+			*lines = append(*lines, fmt.Sprintf("  %s: %t", prefix, v))
+		}
+	case float64:
+		if prefix != "" {
+			*lines = append(*lines, fmt.Sprintf("  %s: %v", prefix, v))
+		}
+	default:
+		if prefix != "" {
+			data, _ := json.Marshal(v)
+			*lines = append(*lines, fmt.Sprintf("  %s: %s", prefix, string(data)))
+		}
+	}
+}
+
+func filterProviderUsageStats(lines []string, scope agentctx.ProviderTokenScope) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+
+	skipPrefixes := map[string]struct{}{}
+	switch scope {
+	case agentctx.ProviderTokenScopePrompt:
+		skipPrefixes["prompt_tokens:"] = struct{}{}
+		skipPrefixes["input_tokens:"] = struct{}{}
+	case agentctx.ProviderTokenScopeTotal:
+		skipPrefixes["total_tokens:"] = struct{}{}
+	}
+
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		skip := false
+		for prefix := range skipPrefixes {
+			if strings.HasPrefix(trimmed, prefix) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			filtered = append(filtered, line)
+		}
+	}
+	return filtered
 }
 
 func (a *Application) cmdClear() {

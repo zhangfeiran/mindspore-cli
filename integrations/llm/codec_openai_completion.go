@@ -116,11 +116,7 @@ func (c *openAICodec) decodeCompletionResponse(resp openAIChatCompletionResponse
 		Model:        resp.Model,
 		Content:      choice.Message.Content,
 		FinishReason: FinishReason(choice.FinishReason),
-		Usage: Usage{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-		},
+		Usage:        resp.Usage.toUsage(),
 	}
 
 	if len(choice.Message.ToolCalls) == 0 {
@@ -211,9 +207,37 @@ type openAIChoice struct {
 }
 
 type openAIUsage struct {
+	PromptTokens     int             `json:"prompt_tokens"`
+	CompletionTokens int             `json:"completion_tokens"`
+	TotalTokens      int             `json:"total_tokens"`
+	Raw              json.RawMessage `json:"-"`
+}
+
+type openAIUsagePayload struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+}
+
+func (u *openAIUsage) UnmarshalJSON(data []byte) error {
+	var payload openAIUsagePayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	u.PromptTokens = payload.PromptTokens
+	u.CompletionTokens = payload.CompletionTokens
+	u.TotalTokens = payload.TotalTokens
+	u.Raw = cloneRawJSON(data)
+	return nil
+}
+
+func (u openAIUsage) toUsage() Usage {
+	return Usage{
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+		Raw:              cloneRawJSON(u.Raw),
+	}
 }
 
 type openAIStreamResponse struct {
@@ -291,11 +315,7 @@ func (it *openAIStreamIterator) Next() (*StreamChunk, error) {
 		}
 		if resp.Usage != nil && len(resp.Choices) == 0 {
 			return &StreamChunk{
-				Usage: &Usage{
-					PromptTokens:     resp.Usage.PromptTokens,
-					CompletionTokens: resp.Usage.CompletionTokens,
-					TotalTokens:      resp.Usage.TotalTokens,
-				},
+				Usage: ptrUsage(resp.Usage.toUsage()),
 			}, nil
 		}
 		if len(resp.Choices) == 0 {
@@ -318,11 +338,7 @@ func (it *openAIStreamIterator) Next() (*StreamChunk, error) {
 			chunk.FinishReason = FinishReason(*choice.FinishReason)
 		}
 		if resp.Usage != nil {
-			chunk.Usage = &Usage{
-				PromptTokens:     resp.Usage.PromptTokens,
-				CompletionTokens: resp.Usage.CompletionTokens,
-				TotalTokens:      resp.Usage.TotalTokens,
-			}
+			chunk.Usage = ptrUsage(resp.Usage.toUsage())
 		}
 
 		return chunk, nil

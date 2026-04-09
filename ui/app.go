@@ -195,7 +195,7 @@ type App struct {
 	unreadCount             int
 	lastMsgCount            int
 	suppressUserEventPrints int
-	backgroundModelWork bool
+	backgroundModelWork     bool
 
 	// Train mode
 	trainView               model.TrainViewState
@@ -229,9 +229,11 @@ type toolOutputViewState struct {
 
 // New creates a new App driven by the given event channel.
 // userCh may be nil — user input won't be forwarded.
-func New(ch <-chan model.Event, userCh chan<- string, version, workDir, repoURL, modelName string, ctxMax int) App {
+func New(ch <-chan model.Event, userCh chan<- string, version, workDir, repoURL, modelName string, ctxMax int, debug ...bool) App {
+	state := model.NewState(version, workDir, repoURL, modelName, ctxMax)
+	state.Model.Debug = len(debug) > 0 && debug[0]
 	return App{
-		state:            model.NewState(version, workDir, repoURL, modelName, ctxMax),
+		state:            state,
 		input:            components.NewTextInput().WithFileSuggestions(workDir),
 		thinking:         components.NewThinkingSpinner(),
 		eventCh:          ch,
@@ -249,8 +251,8 @@ func New(ch <-chan model.Event, userCh chan<- string, version, workDir, repoURL,
 }
 
 // NewReplay creates a TUI instance that starts directly in chat view for playback.
-func NewReplay(ch <-chan model.Event, userCh chan<- string, version, workDir, repoURL, modelName string, ctxMax int) App {
-	app := New(ch, userCh, version, workDir, repoURL, modelName, ctxMax)
+func NewReplay(ch <-chan model.Event, userCh chan<- string, version, workDir, repoURL, modelName string, ctxMax int, debug ...bool) App {
+	app := New(ch, userCh, version, workDir, repoURL, modelName, ctxMax, debug...)
 	app.bootActive = false
 	return app
 }

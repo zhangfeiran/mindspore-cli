@@ -20,6 +20,7 @@ type ModelInfo struct {
 	CtxUsed    int
 	CtxMax     int
 	TokensUsed int
+	Debug      bool
 }
 
 // MessageKind distinguishes chat message types.
@@ -119,7 +120,7 @@ type Event struct {
 	ToolName      string
 	ToolCallID    string
 	Summary       string
-	Meta        map[string]any
+	Meta          map[string]any
 	ReplayWait    *ReplayWaitData
 	CtxUsed       int
 	CtxMax        int

@@ -92,9 +92,10 @@ func (a *Application) runReal() error {
 	ui.InitStyles()
 
 	userCh := make(chan string, 8)
-	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.Window)
+	debugMode := a.llmDebugDumper != nil
+	tui := ui.New(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.Window, debugMode)
 	if a.replayOnly || a.startupSessionPicker != nil {
-		tui = ui.NewReplay(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.Window)
+		tui = ui.NewReplay(a.EventCh, userCh, Version, a.WorkDir, a.RepoURL, a.Config.Model.Model, a.Config.Context.Window, debugMode)
 	}
 	if a.startupSessionPicker != nil {
 		tui = tui.WithStartupBannerSuppressed()

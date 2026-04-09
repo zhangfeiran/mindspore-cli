@@ -5,6 +5,7 @@ import (
 
 	agentctx "github.com/mindspore-lab/mindspore-cli/agent/context"
 	"github.com/mindspore-lab/mindspore-cli/agent/session"
+	"github.com/mindspore-lab/mindspore-cli/integrations/llm"
 )
 
 func providerUsageSnapshotFromDetails(details agentctx.TokenUsageDetails) *session.UsageSnapshot {
@@ -17,6 +18,7 @@ func providerUsageSnapshotFromDetails(details agentctx.TokenUsageDetails) *sessi
 		TokenScope: string(details.ProviderTokenScope),
 		Tokens:     details.ProviderSnapshotTokens,
 		LocalDelta: details.LocalDelta,
+		Usage:      ptrProviderUsage(details.ProviderUsage),
 	}
 }
 
@@ -35,5 +37,21 @@ func restoreProviderUsageSnapshot(cm *agentctx.Manager, usage *session.UsageSnap
 		TokenScope: scope,
 		Tokens:     usage.Tokens,
 		LocalDelta: usage.LocalDelta,
+		Usage:      derefProviderUsage(usage.Usage),
 	})
+}
+
+func ptrProviderUsage(usage llm.Usage) *llm.Usage {
+	if usage.IsZero() {
+		return nil
+	}
+	copy := usage.Clone()
+	return &copy
+}
+
+func derefProviderUsage(usage *llm.Usage) llm.Usage {
+	if usage == nil {
+		return llm.Usage{}
+	}
+	return usage.Clone()
 }

@@ -494,20 +494,10 @@ func TestAnthropicStreamIteratorPrefersFinalUsageSnapshot(t *testing.T) {
 				Text: "hello",
 			},
 		}),
-		mustAnthropicSSEEvent(t, "message_delta", anthropicStreamMessageDeltaEvent{
-			Delta: struct {
-				StopReason string `json:"stop_reason"`
-			}{
-				StopReason: "end_turn",
-			},
-			Usage: anthropicUsage{
-				InputTokens:      1660,
-				OutputTokens:     149,
-				PromptTokens:     1660,
-				CompletionTokens: 149,
-				TotalTokens:      1809,
-			},
-		}),
+		`event: message_delta
+data: {"delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1660,"output_tokens":149,"prompt_tokens":1660,"completion_tokens":149,"total_tokens":1809,"cached_tokens":0}}
+
+`,
 		"event: message_stop\n\n",
 	}, "")
 
@@ -527,6 +517,9 @@ func TestAnthropicStreamIteratorPrefersFinalUsageSnapshot(t *testing.T) {
 	}
 	if got, want := finalChunk.Usage.TotalTokens, 1809; got != want {
 		t.Fatalf("finalChunk.Usage.TotalTokens = %d, want %d", got, want)
+	}
+	if got, want := string(finalChunk.Usage.Raw), `{"input_tokens":1660,"output_tokens":149,"prompt_tokens":1660,"completion_tokens":149,"total_tokens":1809,"cached_tokens":0}`; got != want {
+		t.Fatalf("finalChunk.Usage.Raw = %s, want %s", got, want)
 	}
 }
 

@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -140,6 +142,7 @@ func TestRunTaskPersistsSessionAfterLiveLLMReply(t *testing.T) {
 			PromptTokens:     1660,
 			CompletionTokens: 149,
 			TotalTokens:      1809,
+			Raw:              json.RawMessage(`{"prompt_tokens":1660,"completion_tokens":149,"total_tokens":1809,"cached_tokens":32}`),
 		},
 	}
 	engine := loop.NewEngine(loop.EngineConfig{
@@ -199,4 +202,29 @@ func TestRunTaskPersistsSessionAfterLiveLLMReply(t *testing.T) {
 	if got, want := usage.TokenScope, "total"; got != want {
 		t.Fatalf("usage.TokenScope = %q, want %q", got, want)
 	}
+	if usage.Usage == nil {
+		t.Fatal("usage.Usage = nil, want persisted canonical/raw usage")
+	}
+	if got, want := usage.Usage.CompletionTokens, 149; got != want {
+		t.Fatalf("usage.Usage.CompletionTokens = %d, want %d", got, want)
+	}
+	if !jsonEqualRaw(t, usage.Usage.Raw, json.RawMessage(`{"prompt_tokens":1660,"completion_tokens":149,"total_tokens":1809,"cached_tokens":32}`)) {
+		t.Fatalf("usage.Usage.Raw = %s, want semantic match", string(usage.Usage.Raw))
+	}
+}
+
+func jsonEqualRaw(t *testing.T, got, want json.RawMessage) bool {
+	t.Helper()
+
+	var gotValue any
+	if err := json.Unmarshal(got, &gotValue); err != nil {
+		t.Fatalf("unmarshal got json: %v", err)
+	}
+
+	var wantValue any
+	if err := json.Unmarshal(want, &wantValue); err != nil {
+		t.Fatalf("unmarshal want json: %v", err)
+	}
+
+	return reflect.DeepEqual(gotValue, wantValue)
 }

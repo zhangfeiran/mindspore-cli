@@ -1,8 +1,10 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +46,12 @@ func TestCreateDefersDiskWritesUntilActivate(t *testing.T) {
 		TokenScope: "total",
 		Tokens:     1809,
 		LocalDelta: 17,
+		Usage: &llm.Usage{
+			PromptTokens:     1660,
+			CompletionTokens: 149,
+			TotalTokens:      1809,
+			Raw:              json.RawMessage(`{"prompt_tokens":1660,"completion_tokens":149,"total_tokens":1809,"cached_tokens":0}`),
+		},
 	}); err != nil {
 		t.Fatalf("save buffered snapshot: %v", err)
 	}
@@ -107,6 +115,18 @@ func TestCreateDefersDiskWritesUntilActivate(t *testing.T) {
 	if got, want := usage.LocalDelta, 17; got != want {
 		t.Fatalf("usage.LocalDelta = %d, want %d", got, want)
 	}
+	if usage.Usage == nil {
+		t.Fatal("usage.Usage = nil, want canonical and raw usage")
+	}
+	if got, want := usage.Usage.PromptTokens, 1660; got != want {
+		t.Fatalf("usage.Usage.PromptTokens = %d, want %d", got, want)
+	}
+	if got, want := usage.Usage.CompletionTokens, 149; got != want {
+		t.Fatalf("usage.Usage.CompletionTokens = %d, want %d", got, want)
+	}
+	if !jsonEqual(t, usage.Usage.Raw, json.RawMessage(`{"prompt_tokens":1660,"completion_tokens":149,"total_tokens":1809,"cached_tokens":0}`)) {
+		t.Fatalf("usage.Usage.Raw = %s, want semantic match", string(usage.Usage.Raw))
+	}
 
 	replay := loaded.ReplayEvents()
 	if len(replay) != 3 {
@@ -125,6 +145,22 @@ func TestWorkDirKeySanitizesWindowsInvalidFilenameChars(t *testing.T) {
 	if strings.Trim(key, ".- ") == "" {
 		t.Fatalf("workDirKey(%q) = %q, want non-empty safe key", `C:\Users\alice\work\mscli`, key)
 	}
+}
+
+func jsonEqual(t *testing.T, got, want json.RawMessage) bool {
+	t.Helper()
+
+	var gotValue any
+	if err := json.Unmarshal(got, &gotValue); err != nil {
+		t.Fatalf("unmarshal got json: %v", err)
+	}
+
+	var wantValue any
+	if err := json.Unmarshal(want, &wantValue); err != nil {
+		t.Fatalf("unmarshal want json: %v", err)
+	}
+
+	return reflect.DeepEqual(gotValue, wantValue)
 }
 
 func TestReplayTimelinePreservesRecordTimestamps(t *testing.T) {

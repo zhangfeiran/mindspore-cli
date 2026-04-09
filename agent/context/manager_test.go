@@ -1,6 +1,7 @@
 package context
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -15,8 +16,8 @@ func TestNewManager(t *testing.T) {
 		t.Fatal("NewManager returned nil")
 	}
 
-	if mgr.config.ContextWindow != 24000 {
-		t.Errorf("Expected ContextWindow to be 24000, got %d", mgr.config.ContextWindow)
+	if mgr.config.ContextWindow != 200000 {
+		t.Errorf("Expected ContextWindow to be 200000, got %d", mgr.config.ContextWindow)
 	}
 
 	if mgr.tokenizer == nil {
@@ -151,8 +152,8 @@ func TestTokenUsage(t *testing.T) {
 		t.Error("Token usage should increase after adding message")
 	}
 
-	if usage.ContextWindow != 24000 {
-		t.Errorf("Expected ContextWindow to be 24000, got %d", usage.ContextWindow)
+	if usage.ContextWindow != 200000 {
+		t.Errorf("Expected ContextWindow to be 200000, got %d", usage.ContextWindow)
 	}
 }
 
@@ -306,6 +307,12 @@ func TestRestoreProviderUsageSnapshotRestoresCurrentAndLocalDelta(t *testing.T) 
 		TokenScope: ProviderTokenScopeTotal,
 		Tokens:     1809,
 		LocalDelta: 5,
+		Usage: llm.Usage{
+			PromptTokens:     1660,
+			CompletionTokens: 149,
+			TotalTokens:      1809,
+			Raw:              json.RawMessage(`{"prompt_tokens":1660,"completion_tokens":149,"total_tokens":1809,"cached_tokens":0}`),
+		},
 	})
 
 	if got, want := mgr.TokenUsage().Current, 1814; got != want {
@@ -317,6 +324,12 @@ func TestRestoreProviderUsageSnapshotRestoresCurrentAndLocalDelta(t *testing.T) 
 	}
 	if got, want := details.LocalDelta, 5; got != want {
 		t.Fatalf("TokenUsageDetails().LocalDelta = %d, want %d", got, want)
+	}
+	if got, want := details.ProviderUsage.CompletionTokens, 149; got != want {
+		t.Fatalf("TokenUsageDetails().ProviderUsage.CompletionTokens = %d, want %d", got, want)
+	}
+	if got, want := string(details.ProviderUsage.Raw), `{"prompt_tokens":1660,"completion_tokens":149,"total_tokens":1809,"cached_tokens":0}`; got != want {
+		t.Fatalf("TokenUsageDetails().ProviderUsage.Raw = %s, want %s", got, want)
 	}
 }
 

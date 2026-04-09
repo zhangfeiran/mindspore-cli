@@ -47,6 +47,7 @@ type Manager struct {
 	exactSnapshotEstimate int
 	exactSnapshotProvider string
 	exactSnapshotScope    ProviderTokenScope
+	exactSnapshotUsage    llm.Usage
 	hasExactSnapshot      bool
 
 	// 增强组件
@@ -83,6 +84,7 @@ type TokenUsageDetails struct {
 	Provider               string
 	ProviderSnapshotTokens int
 	ProviderTokenScope     ProviderTokenScope
+	ProviderUsage          llm.Usage
 	LocalEstimatedTotal    int
 	LocalDelta             int
 }
@@ -92,6 +94,7 @@ type ProviderUsageSnapshot struct {
 	TokenScope ProviderTokenScope
 	Tokens     int
 	LocalDelta int
+	Usage      llm.Usage
 }
 
 // Stats 上下文统计
@@ -302,13 +305,17 @@ func (m *Manager) SetContextWindowLimits(contextWindow, reserveTokens int) error
 // SetPromptTokenUsage records provider-reported prompt tokens for the current context.
 // Values <= 0 clear the provider usage and fall back to local estimation.
 func (m *Manager) SetPromptTokenUsage(provider string, promptTokens int) {
-	m.setProviderTokenUsage(provider, promptTokens, ProviderTokenScopePrompt)
+	m.setProviderTokenUsage(provider, promptTokens, ProviderTokenScopePrompt, llm.Usage{
+		PromptTokens: promptTokens,
+	})
 }
 
 // SetTotalTokenUsage records provider-reported total tokens for the current context.
 // Values <= 0 clear the provider usage and fall back to local estimation.
 func (m *Manager) SetTotalTokenUsage(provider string, totalTokens int) {
-	m.setProviderTokenUsage(provider, totalTokens, ProviderTokenScopeTotal)
+	m.setProviderTokenUsage(provider, totalTokens, ProviderTokenScopeTotal, llm.Usage{
+		TotalTokens: totalTokens,
+	})
 }
 
 // SetProviderTokenUsage records the best provider-reported usage snapshot for the current context.
@@ -316,15 +323,15 @@ func (m *Manager) SetTotalTokenUsage(provider string, totalTokens int) {
 func (m *Manager) SetProviderTokenUsage(provider string, usage llm.Usage) {
 	switch {
 	case usage.TotalTokens > 0:
-		m.setProviderTokenUsage(provider, usage.TotalTokens, ProviderTokenScopeTotal)
+		m.setProviderTokenUsage(provider, usage.TotalTokens, ProviderTokenScopeTotal, usage)
 	case usage.PromptTokens > 0:
-		m.setProviderTokenUsage(provider, usage.PromptTokens, ProviderTokenScopePrompt)
+		m.setProviderTokenUsage(provider, usage.PromptTokens, ProviderTokenScopePrompt, usage)
 	default:
-		m.setProviderTokenUsage(provider, 0, "")
+		m.setProviderTokenUsage(provider, 0, "", llm.Usage{})
 	}
 }
 
-func (m *Manager) setProviderTokenUsage(provider string, tokens int, scope ProviderTokenScope) {
+func (m *Manager) setProviderTokenUsage(provider string, tokens int, scope ProviderTokenScope, usage llm.Usage) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -335,6 +342,7 @@ func (m *Manager) setProviderTokenUsage(provider string, tokens int, scope Provi
 		m.exactSnapshotEstimate = m.totalTokensLocked()
 		m.exactSnapshotProvider = strings.TrimSpace(provider)
 		m.exactSnapshotScope = scope
+		m.exactSnapshotUsage = usage.Clone()
 		m.hasExactSnapshot = true
 	}
 
@@ -372,6 +380,18 @@ func (m *Manager) RestoreProviderUsageSnapshot(snapshot ProviderUsageSnapshot) {
 	m.exactSnapshotEstimate = exactEstimate
 	m.exactSnapshotProvider = strings.TrimSpace(snapshot.Provider)
 	m.exactSnapshotScope = scope
+	usage := snapshot.Usage.Clone()
+	switch scope {
+	case ProviderTokenScopeTotal:
+		if usage.TotalTokens <= 0 {
+			usage.TotalTokens = snapshot.Tokens
+		}
+	default:
+		if usage.PromptTokens <= 0 {
+			usage.PromptTokens = snapshot.Tokens
+		}
+	}
+	m.exactSnapshotUsage = usage
 	m.hasExactSnapshot = true
 	m.recalculateUsage()
 }
@@ -399,6 +419,7 @@ func (m *Manager) TokenUsageDetails() TokenUsageDetails {
 	details.Provider = m.exactSnapshotProvider
 	details.ProviderSnapshotTokens = m.exactSnapshotTokens
 	details.ProviderTokenScope = m.exactSnapshotScope
+	details.ProviderUsage = m.exactSnapshotUsage.Clone()
 	details.LocalDelta = localDelta
 	return details
 }
@@ -582,6 +603,7 @@ func (m *Manager) clearProviderTokenUsageLocked() {
 	m.exactSnapshotEstimate = 0
 	m.exactSnapshotProvider = ""
 	m.exactSnapshotScope = ""
+	m.exactSnapshotUsage = llm.Usage{}
 	m.hasExactSnapshot = false
 }
 

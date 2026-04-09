@@ -31,7 +31,7 @@ func TestOpenAIStreamIteratorCapturesUsageAfterFinishReason(t *testing.T) {
 		"",
 		`data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
 		"",
-		`data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13}}`,
+		`data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13,"prompt_tokens_details":{"cached_tokens":3}}}`,
 		"",
 		`data: [DONE]`,
 		"",
@@ -83,5 +83,8 @@ func TestOpenAIStreamIteratorCapturesUsageAfterFinishReason(t *testing.T) {
 	}
 	if got, want := usage.TotalTokens, 13; got != want {
 		t.Fatalf("usage.TotalTokens = %d, want %d", got, want)
+	}
+	if got, want := string(usage.Raw), `{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13,"prompt_tokens_details":{"cached_tokens":3}}`; got != want {
+		t.Fatalf("usage.Raw = %s, want %s", got, want)
 	}
 }

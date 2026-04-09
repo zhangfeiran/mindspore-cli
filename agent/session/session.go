@@ -65,10 +65,11 @@ type Snapshot struct {
 
 // UsageSnapshot stores the latest provider-backed token snapshot for resume.
 type UsageSnapshot struct {
-	Provider   string `json:"provider,omitempty"`
-	TokenScope string `json:"token_scope,omitempty"`
-	Tokens     int    `json:"tokens,omitempty"`
-	LocalDelta int    `json:"local_delta,omitempty"`
+	Provider   string     `json:"provider,omitempty"`
+	TokenScope string     `json:"token_scope,omitempty"`
+	Tokens     int        `json:"tokens,omitempty"`
+	LocalDelta int        `json:"local_delta,omitempty"`
+	Usage      *llm.Usage `json:"usage,omitempty"`
 }
 
 // ReplayFrame is one UI replay event paired with its original timestamp.
@@ -1051,6 +1052,10 @@ func cloneUsageSnapshot(usage *UsageSnapshot) *UsageSnapshot {
 		return nil
 	}
 	copy := *usage
+	if usage.Usage != nil {
+		clonedUsage := usage.Usage.Clone()
+		copy.Usage = &clonedUsage
+	}
 	return &copy
 }
 
