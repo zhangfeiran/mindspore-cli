@@ -685,6 +685,19 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, noteLiveLLM
 				compressionSnapshotFromManager(cm),
 			)
 		},
+		PersistPreCompactSnapshot: func(snapshot loop.PreCompactSnapshot) error {
+			if s == nil {
+				return nil
+			}
+			return persistDebugCompactionSnapshot(
+				s,
+				snapshot.Label,
+				snapshot.SystemPrompt,
+				snapshot.Messages,
+				snapshot.Usage,
+				snapshot.Compression,
+			)
+		},
 	}
 }
 

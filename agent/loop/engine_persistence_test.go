@@ -161,6 +161,10 @@ func newPersistenceRecorder(log *[]string) *TrajectoryRecorder {
 			appendLog(last)
 			return nil
 		},
+		PersistPreCompactSnapshot: func(snapshot PreCompactSnapshot) error {
+			appendLog("debug_snapshot:" + snapshot.Label)
+			return nil
+		},
 		PersistSnapshot: func() error {
 			appendLog("snapshot:" + last)
 			return nil
@@ -472,6 +476,7 @@ func TestRunPersistsSnapshotBeforeContextCompactionNotice(t *testing.T) {
 		}
 	}
 	engine.SetContextManager(cm)
+	engine.SetLLMDebugDumper(llm.NewDebugDumper(t.TempDir()))
 
 	var log []string
 	var compactMessage string
@@ -490,6 +495,7 @@ func TestRunPersistsSnapshotBeforeContextCompactionNotice(t *testing.T) {
 		t.Fatalf("RunWithContextStream failed: %v", err)
 	}
 
+	requireOrder(t, log, "debug_snapshot:user", "snapshot:user", "ui:ContextCompacted")
 	requireOrder(t, log, "user", "snapshot:user", "ui:ContextCompacted", "ui:TaskStarted")
 	if !strings.Contains(compactMessage, "Context compacted automatically:") {
 		t.Fatalf("context compaction message = %q, want automatic compaction summary", compactMessage)

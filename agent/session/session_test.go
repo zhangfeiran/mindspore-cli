@@ -194,6 +194,50 @@ func TestSaveSnapshotWithCompressionPersistsCompressionState(t *testing.T) {
 	}
 }
 
+func TestSaveDebugSnapshotWithCompressionWritesStandalonePreCompactFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	workDir := t.TempDir()
+	s, err := Create(workDir, "system prompt")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	path, err := s.SaveDebugSnapshotWithCompression("manual", "system prompt", []llm.Message{
+		llm.NewUserMessage("hello"),
+	}, &UsageSnapshot{
+		Provider:   "openai-responses",
+		TokenScope: "total",
+		Tokens:     321,
+	}, &CompressionState{
+		SessionNotes: &SessionNotesState{Content: "[Session Notes]"},
+	})
+	if err != nil {
+		t.Fatalf("SaveDebugSnapshotWithCompression failed: %v", err)
+	}
+	if !strings.Contains(filepath.Base(path), "snapshot.compact-pre-manual-") {
+		t.Fatalf("debug snapshot path = %q, want compact-pre-manual filename", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read debug snapshot: %v", err)
+	}
+	var snapshot Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		t.Fatalf("unmarshal debug snapshot: %v", err)
+	}
+	if got, want := len(snapshot.Messages), 1; got != want {
+		t.Fatalf("debug snapshot message count = %d, want %d", got, want)
+	}
+	if snapshot.ProviderUsage == nil || snapshot.ProviderUsage.Tokens != 321 {
+		t.Fatalf("debug snapshot provider usage = %#v, want persisted usage", snapshot.ProviderUsage)
+	}
+	if snapshot.Compression == nil || snapshot.Compression.SessionNotes == nil {
+		t.Fatalf("debug snapshot compression = %#v, want persisted compression", snapshot.Compression)
+	}
+}
+
 func TestWorkDirKeySanitizesWindowsInvalidFilenameChars(t *testing.T) {
 	key := workDirKey(`C:\Users\alice\work\mscli`)
 

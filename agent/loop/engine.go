@@ -39,12 +39,21 @@ type Engine struct {
 
 // TrajectoryRecorder records runtime conversation events for persistence.
 type TrajectoryRecorder struct {
-	RecordUserInput     func(string) error
-	RecordAssistant     func(string) error
-	RecordToolCall      func(llm.ToolCall) error
-	RecordToolResult    func(llm.ToolCall, string) error
-	RecordSkillActivate func(string) error
-	PersistSnapshot     func() error
+	RecordUserInput           func(string) error
+	RecordAssistant           func(string) error
+	RecordToolCall            func(llm.ToolCall) error
+	RecordToolResult          func(llm.ToolCall, string) error
+	RecordSkillActivate       func(string) error
+	PersistSnapshot           func() error
+	PersistPreCompactSnapshot func(PreCompactSnapshot) error
+}
+
+type PreCompactSnapshot struct {
+	Label        string
+	SystemPrompt string
+	Messages     []llm.Message
+	Usage        ctxmanager.TokenUsageDetails
+	Compression  *ctxmanager.CompressionState
 }
 
 // NewEngine creates a new engine.
@@ -673,12 +682,16 @@ func (ex *executor) persistSnapshot() error {
 func (ex *executor) addContextMessage(msg llm.Message) (*contextCompactionNotice, error) {
 	beforeUsage := ex.engine.ctxManager.TokenUsage()
 	beforeCompactCount := ex.engine.ctxManager.CompactCount()
+	preCompact := ex.capturePreCompactSnapshot(msg.Role)
 	if err := ex.engine.ctxManager.AddMessage(msg); err != nil {
 		return nil, err
 	}
 	afterCompactCount := ex.engine.ctxManager.CompactCount()
 	if afterCompactCount <= beforeCompactCount {
 		return nil, nil
+	}
+	if err := ex.persistPreCompactSnapshot(preCompact); err != nil {
+		return nil, err
 	}
 	afterUsage := ex.engine.ctxManager.TokenUsage()
 	return &contextCompactionNotice{
@@ -704,6 +717,7 @@ func (ex *executor) addToolResult(callID, content string) (*contextCompactionNot
 	if tc := ex.findToolCall(callID); tc != nil {
 		toolName = tc.Function.Name
 	}
+	preCompact := ex.capturePreCompactSnapshot("tool")
 	err := ex.engine.ctxManager.AddToolResultWithName(toolName, callID, content)
 	if err != nil {
 		return nil, err
@@ -711,6 +725,9 @@ func (ex *executor) addToolResult(callID, content string) (*contextCompactionNot
 	afterCompactCount := ex.engine.ctxManager.CompactCount()
 	var notice *contextCompactionNotice
 	if afterCompactCount > beforeCompactCount {
+		if err := ex.persistPreCompactSnapshot(preCompact); err != nil {
+			return nil, err
+		}
 		afterUsage := ex.engine.ctxManager.TokenUsage()
 		notice = &contextCompactionNotice{
 			BeforeTokens: beforeUsage.Current,
@@ -738,9 +755,15 @@ func (ex *executor) prepareContextForRequest() (*contextCompactionNotice, error)
 		return nil, nil
 	}
 
+	preCompact := ex.capturePreCompactSnapshot("auto")
 	result, err := ex.engine.ctxManager.PrepareForRequest(time.Now())
 	if err != nil {
 		return nil, err
+	}
+	if result.AutoCompacted {
+		if err := ex.persistPreCompactSnapshot(preCompact); err != nil {
+			return nil, err
+		}
 	}
 	if result.Changed {
 		if err := ex.persistSnapshot(); err != nil {
@@ -754,6 +777,34 @@ func (ex *executor) prepareContextForRequest() (*contextCompactionNotice, error)
 		BeforeTokens: result.BeforeTokens,
 		AfterTokens:  result.AfterTokens,
 	}, nil
+}
+
+func (ex *executor) capturePreCompactSnapshot(label string) *PreCompactSnapshot {
+	if ex == nil || ex.engine == nil || ex.engine.ctxManager == nil || ex.engine.debugDumper == nil {
+		return nil
+	}
+	if ex.engine.recorder == nil || ex.engine.recorder.PersistPreCompactSnapshot == nil {
+		return nil
+	}
+
+	systemPrompt := ""
+	if msg := ex.engine.ctxManager.GetSystemPrompt(); msg != nil {
+		systemPrompt = msg.Content
+	}
+	return &PreCompactSnapshot{
+		Label:        label,
+		SystemPrompt: systemPrompt,
+		Messages:     ex.engine.ctxManager.GetNonSystemMessages(),
+		Usage:        ex.engine.ctxManager.TokenUsageDetails(),
+		Compression:  ex.engine.ctxManager.ExportCompressionState(),
+	}
+}
+
+func (ex *executor) persistPreCompactSnapshot(snapshot *PreCompactSnapshot) error {
+	if snapshot == nil || ex == nil || ex.engine == nil || ex.engine.recorder == nil || ex.engine.recorder.PersistPreCompactSnapshot == nil {
+		return nil
+	}
+	return ex.engine.recorder.PersistPreCompactSnapshot(*snapshot)
 }
 
 func (ex *executor) addToolResultWithFallback(callID, content string) (*contextCompactionNotice, error) {

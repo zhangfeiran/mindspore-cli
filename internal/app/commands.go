@@ -460,6 +460,14 @@ func (a *Application) cmdCompact() {
 	}
 
 	before := a.ctxManager.TokenUsage()
+	if err := a.persistDebugCompactionSnapshot("manual"); err != nil {
+		a.EventCh <- model.Event{
+			Type:     model.ToolError,
+			ToolName: "session",
+			Message:  fmt.Sprintf("Failed to persist pre-compact snapshot: %v", err),
+		}
+		return
+	}
 	if err := a.ctxManager.Compact(); err != nil {
 		a.EventCh <- model.Event{
 			Type:     model.ToolError,

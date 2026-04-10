@@ -588,6 +588,25 @@ func (a *Application) persistSessionSnapshot() error {
 	)
 }
 
+func (a *Application) persistDebugCompactionSnapshot(label string) error {
+	if a == nil || a.llmDebugDumper == nil || a.session == nil || a.ctxManager == nil {
+		return nil
+	}
+
+	systemPrompt := ""
+	if msg := a.ctxManager.GetSystemPrompt(); msg != nil {
+		systemPrompt = msg.Content
+	}
+	return persistDebugCompactionSnapshot(
+		a.session,
+		label,
+		systemPrompt,
+		a.ctxManager.GetNonSystemMessages(),
+		a.ctxManager.TokenUsageDetails(),
+		a.ctxManager.ExportCompressionState(),
+	)
+}
+
 func (a *Application) noteLiveLLMActivity() error {
 	if a == nil || a.session == nil {
 		return nil

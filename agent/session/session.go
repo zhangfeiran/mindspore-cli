@@ -20,6 +20,7 @@ const (
 	trajectoryFilename   = "trajectory.jsonl"
 	snapshotFilename     = "snapshot.json"
 	toolResultsSubdir    = "tool-results"
+	compactPrePrefix     = "snapshot.compact-pre"
 	recordTypeMeta       = "session_meta"
 	recordTypeUser       = "user"
 	recordTypeAssistant  = "assistant"
@@ -1098,6 +1099,44 @@ func (s *Session) SaveSnapshotWithCompression(systemPrompt string, messages []ll
 	return s.writeSnapshotLocked()
 }
 
+// SaveDebugSnapshotWithCompression writes an additional restorable snapshot into the
+// session directory without mutating the primary snapshot.json file.
+func (s *Session) SaveDebugSnapshotWithCompression(label, systemPrompt string, messages []llm.Message, usage *UsageSnapshot, compression *CompressionState) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("session is nil")
+	}
+
+	s.mu.RLock()
+	sessionID := s.snapshot.SessionID
+	workDir := s.snapshot.WorkDir
+	basePath := s.path
+	s.mu.RUnlock()
+
+	now := time.Now()
+	snapshot := Snapshot{
+		SessionID:     sessionID,
+		WorkDir:       workDir,
+		SystemPrompt:  systemPrompt,
+		UpdatedAt:     now,
+		Messages:      cloneMessages(messages),
+		ProviderUsage: cloneUsageSnapshot(usage),
+		Compression:   cloneCompressionState(compression),
+	}
+
+	path := debugSnapshotPath(basePath, label, now)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return "", fmt.Errorf("create session directory: %w", err)
+	}
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal debug snapshot: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return "", fmt.Errorf("write debug snapshot: %w", err)
+	}
+	return path, nil
+}
+
 func cloneUsageSnapshot(usage *UsageSnapshot) *UsageSnapshot {
 	if usage == nil {
 		return nil
@@ -1137,6 +1176,15 @@ func cloneTimePtr(v *time.Time) *time.Time {
 	}
 	copy := *v
 	return &copy
+}
+
+func cloneMessages(messages []llm.Message) []llm.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	cloned := make([]llm.Message, len(messages))
+	copy(cloned, messages)
+	return cloned
 }
 
 func (s *Session) cleanupActivationFailureLocked() {
@@ -1279,6 +1327,41 @@ func trajectoryPath(key, sessionID string) string {
 
 func snapshotPath(trajectoryPath string) string {
 	return filepath.Join(filepath.Dir(trajectoryPath), snapshotFilename)
+}
+
+func debugSnapshotPath(trajectoryPath, label string, now time.Time) string {
+	name := compactPrePrefix
+	if sanitized := sanitizeDebugSnapshotLabel(label); sanitized != "" {
+		name += "-" + sanitized
+	}
+	stamp := now.UTC().Format("20060102-150405-000000000")
+	return filepath.Join(filepath.Dir(trajectoryPath), name+"-"+stamp+".json")
+}
+
+func sanitizeDebugSnapshotLabel(label string) string {
+	label = strings.TrimSpace(strings.ToLower(label))
+	if label == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	lastDash := false
+	for _, r := range label {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastDash = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		case r == '-' || r == '_' || unicode.IsSpace(r):
+			if !lastDash && b.Len() > 0 {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func nextSessionLocation(key string, now time.Time) (string, string, error) {

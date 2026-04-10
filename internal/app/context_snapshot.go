@@ -27,7 +27,10 @@ func compressionSnapshotFromManager(cm *agentctx.Manager) *session.CompressionSt
 	if cm == nil {
 		return nil
 	}
-	state := cm.ExportCompressionState()
+	return compressionSnapshotFromState(cm.ExportCompressionState())
+}
+
+func compressionSnapshotFromState(state *agentctx.CompressionState) *session.CompressionState {
 	if state == nil {
 		return nil
 	}
@@ -48,6 +51,20 @@ func compressionSnapshotFromManager(cm *agentctx.Manager) *session.CompressionSt
 		})
 	}
 	return result
+}
+
+func persistDebugCompactionSnapshot(s *session.Session, label, systemPrompt string, messages []llm.Message, details agentctx.TokenUsageDetails, compression *agentctx.CompressionState) error {
+	if s == nil {
+		return nil
+	}
+	_, err := s.SaveDebugSnapshotWithCompression(
+		label,
+		systemPrompt,
+		messages,
+		providerUsageSnapshotFromDetails(details),
+		compressionSnapshotFromState(compression),
+	)
+	return err
 }
 
 func restoreCompressionSnapshot(cm *agentctx.Manager, state *session.CompressionState) {
