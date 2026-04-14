@@ -240,12 +240,9 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	managerCfg.MicrocompactIdleMinutes = config.Context.MicrocompactIdleMinutes
 	managerCfg.MicrocompactKeepRecent = config.Context.MicrocompactKeepRecent
 	managerCfg.AutoCompactBufferTokens = config.Context.AutoCompactBufferTokens
-	managerCfg.NotesEnabled = config.Context.NotesEnabled
-	managerCfg.NotesInitTokens = config.Context.NotesInitTokens
-	managerCfg.NotesUpdateTokens = config.Context.NotesUpdateTokens
-	managerCfg.NotesMinTailTokens = config.Context.NotesMinTailTokens
-	managerCfg.NotesMaxTailTokens = config.Context.NotesMaxTailTokens
-	managerCfg.NotesMinMessages = config.Context.NotesMinMessages
+	managerCfg.AutoCompactMinTailTokens = config.Context.AutoCompactMinTailTokens
+	managerCfg.AutoCompactMaxTailTokens = config.Context.AutoCompactMaxTailTokens
+	managerCfg.AutoCompactMinMessages = config.Context.AutoCompactMinMessages
 	ctxManager := agentctx.NewManager(managerCfg)
 
 	// Build system prompt: base + skill summaries.

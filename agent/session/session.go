@@ -67,9 +67,8 @@ type Snapshot struct {
 }
 
 type CompressionState struct {
-	LastAssistantAt *time.Time         `json:"last_assistant_at,omitempty"`
-	ToolArtifacts   []ToolArtifact     `json:"tool_artifacts,omitempty"`
-	SessionNotes    *SessionNotesState `json:"session_notes,omitempty"`
+	LastAssistantAt *time.Time     `json:"last_assistant_at,omitempty"`
+	ToolArtifacts   []ToolArtifact `json:"tool_artifacts,omitempty"`
 }
 
 type ToolArtifact struct {
@@ -79,12 +78,6 @@ type ToolArtifact struct {
 	OriginalSize int       `json:"original_size,omitempty"`
 	State        string    `json:"state,omitempty"`
 	CreatedAt    time.Time `json:"created_at,omitempty"`
-}
-
-type SessionNotesState struct {
-	Content          string    `json:"content,omitempty"`
-	UpdatedAt        time.Time `json:"updated_at,omitempty"`
-	SourceTokenCount int       `json:"source_token_count,omitempty"`
 }
 
 // UsageSnapshot stores the latest provider-backed token snapshot for resume.
@@ -1156,18 +1149,9 @@ func cloneCompressionState(state *CompressionState) *CompressionState {
 	copy := &CompressionState{
 		LastAssistantAt: cloneTimePtr(state.LastAssistantAt),
 		ToolArtifacts:   make([]ToolArtifact, len(state.ToolArtifacts)),
-		SessionNotes:    cloneSessionNotesState(state.SessionNotes),
 	}
 	copy.ToolArtifacts = append(copy.ToolArtifacts[:0], state.ToolArtifacts...)
 	return copy
-}
-
-func cloneSessionNotesState(state *SessionNotesState) *SessionNotesState {
-	if state == nil {
-		return nil
-	}
-	copy := *state
-	return &copy
 }
 
 func cloneTimePtr(v *time.Time) *time.Time {

@@ -155,11 +155,6 @@ func TestSaveSnapshotWithCompressionPersistsCompressionState(t *testing.T) {
 			State:        "previewed",
 			CreatedAt:    assistantAt,
 		}},
-		SessionNotes: &SessionNotesState{
-			Content:          "[Session Notes]\n\nCurrent State:\nhello",
-			UpdatedAt:        assistantAt,
-			SourceTokenCount: 123,
-		},
 	}); err != nil {
 		t.Fatalf("SaveSnapshotWithCompression failed: %v", err)
 	}
@@ -189,9 +184,6 @@ func TestSaveSnapshotWithCompressionPersistsCompressionState(t *testing.T) {
 	if got, want := state.ToolArtifacts[0].ToolCallID, "call_1"; got != want {
 		t.Fatalf("ToolArtifacts[0].ToolCallID = %q, want %q", got, want)
 	}
-	if state.SessionNotes == nil || !strings.Contains(state.SessionNotes.Content, "Current State:") {
-		t.Fatalf("SessionNotes = %#v, want persisted content", state.SessionNotes)
-	}
 }
 
 func TestSaveDebugSnapshotWithCompressionWritesStandalonePreCompactFile(t *testing.T) {
@@ -209,9 +201,7 @@ func TestSaveDebugSnapshotWithCompressionWritesStandalonePreCompactFile(t *testi
 		Provider:   "openai-responses",
 		TokenScope: "total",
 		Tokens:     321,
-	}, &CompressionState{
-		SessionNotes: &SessionNotesState{Content: "[Session Notes]"},
-	})
+	}, &CompressionState{})
 	if err != nil {
 		t.Fatalf("SaveDebugSnapshotWithCompression failed: %v", err)
 	}
@@ -233,7 +223,7 @@ func TestSaveDebugSnapshotWithCompressionWritesStandalonePreCompactFile(t *testi
 	if snapshot.ProviderUsage == nil || snapshot.ProviderUsage.Tokens != 321 {
 		t.Fatalf("debug snapshot provider usage = %#v, want persisted usage", snapshot.ProviderUsage)
 	}
-	if snapshot.Compression == nil || snapshot.Compression.SessionNotes == nil {
+	if snapshot.Compression == nil {
 		t.Fatalf("debug snapshot compression = %#v, want persisted compression", snapshot.Compression)
 	}
 }

@@ -12,21 +12,18 @@ import (
 
 // ManagerConfig holds the manager configuration.
 type ManagerConfig struct {
-	ContextWindow           int
-	ReserveTokens           int
-	CompactionThreshold     float64
-	ToolResultMaxChars      int
-	ToolResultBatchChars    int
-	ToolResultPreviewBytes  int
-	MicrocompactIdleMinutes int
-	MicrocompactKeepRecent  int
-	AutoCompactBufferTokens int
-	NotesEnabled            bool
-	NotesInitTokens         int
-	NotesUpdateTokens       int
-	NotesMinTailTokens      int
-	NotesMaxTailTokens      int
-	NotesMinMessages        int
+	ContextWindow            int
+	ReserveTokens            int
+	CompactionThreshold      float64
+	ToolResultMaxChars       int
+	ToolResultBatchChars     int
+	ToolResultPreviewBytes   int
+	MicrocompactIdleMinutes  int
+	MicrocompactKeepRecent   int
+	AutoCompactBufferTokens  int
+	AutoCompactMinTailTokens int
+	AutoCompactMaxTailTokens int
+	AutoCompactMinMessages   int
 
 	// 新增配置
 	EnableSmartCompact bool            // 启用智能压缩
@@ -37,24 +34,21 @@ type ManagerConfig struct {
 // DefaultManagerConfig 返回默认配置
 func DefaultManagerConfig() ManagerConfig {
 	return ManagerConfig{
-		ContextWindow:           configs.DefaultContextWindow,
-		ReserveTokens:           configs.DefaultReserveTokens(configs.DefaultContextWindow),
-		CompactionThreshold:     0.9,
-		ToolResultMaxChars:      configs.DefaultToolResultMaxChars,
-		ToolResultBatchChars:    configs.DefaultToolResultBatchChars,
-		ToolResultPreviewBytes:  configs.DefaultToolResultPreviewBytes,
-		MicrocompactIdleMinutes: configs.DefaultMicrocompactIdleMinutes,
-		MicrocompactKeepRecent:  configs.DefaultMicrocompactKeepRecent,
-		AutoCompactBufferTokens: configs.DefaultAutoCompactBufferTokens,
-		NotesEnabled:            true,
-		NotesInitTokens:         configs.DefaultNotesInitTokens,
-		NotesUpdateTokens:       configs.DefaultNotesUpdateTokens,
-		NotesMinTailTokens:      configs.DefaultNotesMinTailTokens,
-		NotesMaxTailTokens:      configs.DefaultNotesMaxTailTokens,
-		NotesMinMessages:        configs.DefaultNotesMinMessages,
-		EnableSmartCompact:      true,
-		CompactStrategy:         CompactStrategyHybrid,
-		EnablePriority:          true,
+		ContextWindow:            configs.DefaultContextWindow,
+		ReserveTokens:            configs.DefaultReserveTokens(configs.DefaultContextWindow),
+		CompactionThreshold:      0.9,
+		ToolResultMaxChars:       configs.DefaultToolResultMaxChars,
+		ToolResultBatchChars:     configs.DefaultToolResultBatchChars,
+		ToolResultPreviewBytes:   configs.DefaultToolResultPreviewBytes,
+		MicrocompactIdleMinutes:  configs.DefaultMicrocompactIdleMinutes,
+		MicrocompactKeepRecent:   configs.DefaultMicrocompactKeepRecent,
+		AutoCompactBufferTokens:  configs.DefaultAutoCompactBufferTokens,
+		AutoCompactMinTailTokens: configs.DefaultAutoCompactMinTailTokens,
+		AutoCompactMaxTailTokens: configs.DefaultAutoCompactMaxTailTokens,
+		AutoCompactMinMessages:   configs.DefaultAutoCompactMinMessages,
+		EnableSmartCompact:       true,
+		CompactStrategy:          CompactStrategyHybrid,
+		EnablePriority:           true,
 	}
 }
 
@@ -86,7 +80,6 @@ type Manager struct {
 	toolResultDir   string
 	lastAssistantAt *time.Time
 	toolArtifacts   map[string]ToolArtifact
-	sessionNotes    *SessionNotes
 	toolCallNames   map[string]string
 }
 
@@ -166,20 +159,14 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.AutoCompactBufferTokens == 0 {
 		cfg.AutoCompactBufferTokens = configs.DefaultAutoCompactBufferTokens
 	}
-	if cfg.NotesInitTokens == 0 {
-		cfg.NotesInitTokens = configs.DefaultNotesInitTokens
+	if cfg.AutoCompactMinTailTokens == 0 {
+		cfg.AutoCompactMinTailTokens = configs.DefaultAutoCompactMinTailTokens
 	}
-	if cfg.NotesUpdateTokens == 0 {
-		cfg.NotesUpdateTokens = configs.DefaultNotesUpdateTokens
+	if cfg.AutoCompactMaxTailTokens == 0 {
+		cfg.AutoCompactMaxTailTokens = configs.DefaultAutoCompactMaxTailTokens
 	}
-	if cfg.NotesMinTailTokens == 0 {
-		cfg.NotesMinTailTokens = configs.DefaultNotesMinTailTokens
-	}
-	if cfg.NotesMaxTailTokens == 0 {
-		cfg.NotesMaxTailTokens = configs.DefaultNotesMaxTailTokens
-	}
-	if cfg.NotesMinMessages == 0 {
-		cfg.NotesMinMessages = configs.DefaultNotesMinMessages
+	if cfg.AutoCompactMinMessages == 0 {
+		cfg.AutoCompactMinMessages = configs.DefaultAutoCompactMinMessages
 	}
 
 	// 创建压缩器
@@ -347,7 +334,6 @@ func (m *Manager) Clear() {
 
 	m.messages = make([]llm.Message, 0)
 	m.toolArtifacts = make(map[string]ToolArtifact)
-	m.sessionNotes = nil
 	m.lastAssistantAt = nil
 	m.toolCallNames = make(map[string]string)
 	m.clearProviderTokenUsageLocked()
@@ -573,12 +559,10 @@ func (m *Manager) GetDetailedStats() map[string]any {
 		},
 		"stats": m.stats,
 		"compression": map[string]any{
-			"tool_result_dir":      m.toolResultDir,
-			"previewed_results":    m.countToolArtifactsByState(toolArtifactStatePreviewed),
-			"cleared_results":      m.countToolArtifactsByState(toolArtifactStateCleared),
-			"last_assistant_at":    m.lastAssistantAt,
-			"session_notes":        m.sessionNotes,
-			"session_notes_active": m.sessionNotes != nil && strings.TrimSpace(m.sessionNotes.Content) != "",
+			"tool_result_dir":   m.toolResultDir,
+			"previewed_results": m.countToolArtifactsByState(toolArtifactStatePreviewed),
+			"cleared_results":   m.countToolArtifactsByState(toolArtifactStateCleared),
+			"last_assistant_at": m.lastAssistantAt,
 		},
 	}
 

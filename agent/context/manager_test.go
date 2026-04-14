@@ -3,7 +3,6 @@ package context
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -644,37 +643,5 @@ func TestPrepareForRequestClearsOldToolResultsAfterIdle(t *testing.T) {
 	}
 	if got, want := msgs[2].Content, "new output"; got != want {
 		t.Fatalf("new tool result content = %q, want %q", got, want)
-	}
-}
-
-func TestCompactExportsSessionNotesInCompressionState(t *testing.T) {
-	cfg := DefaultManagerConfig()
-	cfg.ContextWindow = 100
-	cfg.ReserveTokens = 10
-	cfg.NotesEnabled = true
-	cfg.NotesInitTokens = 1
-	cfg.NotesUpdateTokens = 1
-	mgr := NewManager(cfg)
-	mgr.SetToolResultArtifactDir(filepath.Join(t.TempDir(), "tool-results"))
-
-	for i := 0; i < 4; i++ {
-		if err := mgr.AddMessage(llm.NewUserMessage(strings.Repeat("x", 80))); err != nil {
-			t.Fatalf("AddMessage #%d failed: %v", i+1, err)
-		}
-	}
-	if err := mgr.Compact(); err != nil {
-		t.Fatalf("Compact failed: %v", err)
-	}
-
-	state := mgr.ExportCompressionState()
-	if state == nil || state.SessionNotes == nil {
-		t.Fatal("SessionNotes = nil, want notes snapshot")
-	}
-	if !strings.Contains(state.SessionNotes.Content, "Current State:") {
-		t.Fatalf("session notes content = %q, want Current State section", state.SessionNotes.Content)
-	}
-	msgs := mgr.GetNonSystemMessages()
-	if len(msgs) == 0 || !isSessionNotesMessage(msgs[0]) {
-		t.Fatalf("first message after compact = %#v, want session notes message", msgs)
 	}
 }

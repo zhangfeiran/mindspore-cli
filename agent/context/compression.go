@@ -15,7 +15,6 @@ const (
 	persistedToolResultOpenTag  = "<persisted-tool-result>"
 	persistedToolResultCloseTag = "</persisted-tool-result>"
 	clearedToolResultMessage    = "[Old tool result content cleared]"
-	sessionNotesHeader          = "[Session Notes]"
 
 	toolArtifactStatePreviewed = "previewed"
 	toolArtifactStateCleared   = "cleared"
@@ -37,16 +36,9 @@ type ToolArtifact struct {
 	CreatedAt    time.Time
 }
 
-type SessionNotes struct {
-	Content          string
-	UpdatedAt        time.Time
-	SourceTokenCount int
-}
-
 type CompressionState struct {
 	LastAssistantAt *time.Time
 	ToolArtifacts   []ToolArtifact
-	SessionNotes    *SessionNotes
 }
 
 type PrepareResult struct {
@@ -54,7 +46,6 @@ type PrepareResult struct {
 	AutoCompacted        bool
 	ToolResultsPersisted int
 	ToolResultsCleared   int
-	NotesUpdated         bool
 	BeforeTokens         int
 	AfterTokens          int
 }
@@ -77,7 +68,6 @@ func (m *Manager) RestoreCompressionState(state *CompressionState) {
 	defer m.mu.Unlock()
 
 	m.toolArtifacts = make(map[string]ToolArtifact)
-	m.sessionNotes = nil
 	m.lastAssistantAt = nil
 	if state == nil {
 		return
@@ -92,7 +82,6 @@ func (m *Manager) RestoreCompressionState(state *CompressionState) {
 			}
 		}
 	}
-	m.sessionNotes = cloneSessionNotesLocked(state.SessionNotes)
 }
 
 func (m *Manager) PrepareForRequest(now time.Time) (PrepareResult, error) {
@@ -107,8 +96,7 @@ func (m *Manager) prepareLocked(now time.Time, forceCompact bool) (PrepareResult
 	}
 
 	beforeTokens := m.currentTokensLocked()
-	baseMessages, _ := stripSessionNotesMessages(m.messages)
-	working := cloneMessages(baseMessages)
+	working := cloneMessages(m.messages)
 
 	persisted, next, err := m.applyAggregateToolResultBudgetLocked(working, now)
 	if err != nil {
@@ -122,9 +110,6 @@ func (m *Manager) prepareLocked(now time.Time, forceCompact bool) (PrepareResult
 		cleared = count
 	}
 
-	preparedTokens := estimateMessagesWithSystem(m.assembleMessagesWithNotesLocked(working), m.system, m.tokenizer)
-	notesUpdated := m.maybeRefreshSessionNotesLocked(working, preparedTokens, now)
-
 	autoCompacted := false
 	if forceCompact || m.shouldAutoCompactPreparedLocked(working) {
 		compacted, changed := m.autoCompactPreparedLocked(working, now, forceCompact)
@@ -134,8 +119,8 @@ func (m *Manager) prepareLocked(now time.Time, forceCompact bool) (PrepareResult
 		}
 	}
 
-	finalMessages := m.assembleMessagesWithNotesLocked(working)
-	changed := !messagesEqual(finalMessages, m.messages) || notesUpdated || persisted > 0 || cleared > 0
+	finalMessages := working
+	changed := !messagesEqual(finalMessages, m.messages) || persisted > 0 || cleared > 0
 	if changed {
 		m.messages = finalMessages
 		m.stats.MessageCount = len(m.messages)
@@ -154,7 +139,6 @@ func (m *Manager) prepareLocked(now time.Time, forceCompact bool) (PrepareResult
 		AutoCompacted:        autoCompacted,
 		ToolResultsPersisted: persisted,
 		ToolResultsCleared:   cleared,
-		NotesUpdated:         notesUpdated,
 		BeforeTokens:         beforeTokens,
 		AfterTokens:          m.currentTokensLocked(),
 	}, nil
@@ -233,13 +217,13 @@ func (m *Manager) shouldAutoCompactPreparedLocked(messages []llm.Message) bool {
 	if threshold <= 0 {
 		threshold = m.maxUsableTokensLocked()
 	}
-	current := estimateMessagesWithSystem(m.assembleMessagesWithNotesLocked(messages), m.system, m.tokenizer)
+	current := estimateMessagesWithSystem(messages, m.system, m.tokenizer)
 	return current >= threshold
 }
 
 func (m *Manager) autoCompactPreparedLocked(messages []llm.Message, now time.Time, force bool) ([]llm.Message, bool) {
 	if len(messages) == 0 {
-		return m.assembleMessagesWithNotesLocked(messages), false
+		return messages, false
 	}
 
 	groups := groupMessages(messages)
@@ -249,7 +233,7 @@ func (m *Manager) autoCompactPreparedLocked(messages []llm.Message, now time.Tim
 	usedTokens := countTokensInGroups(selected, m.tokenizer)
 	textMessages := countTextMessagesInGroups(selected)
 
-	tailMax := m.config.NotesMaxTailTokens
+	tailMax := m.config.AutoCompactMaxTailTokens
 	if tailMax <= 0 {
 		tailMax = m.maxUsableTokensLocked()
 	}
@@ -263,14 +247,14 @@ func (m *Manager) autoCompactPreparedLocked(messages []llm.Message, now time.Tim
 			tailMax = manualTarget
 		}
 	}
-	minTail := m.config.NotesMinTailTokens
+	minTail := m.config.AutoCompactMinTailTokens
 	if minTail <= 0 {
 		minTail = tailMax
 	}
 	if minTail > tailMax {
 		minTail = tailMax
 	}
-	minMessages := m.config.NotesMinMessages
+	minMessages := m.config.AutoCompactMinMessages
 	if minMessages <= 0 {
 		minMessages = 1
 	}
@@ -295,7 +279,7 @@ func (m *Manager) autoCompactPreparedLocked(messages []llm.Message, now time.Tim
 
 	sortMessageGroupsByStart(selected)
 	compacted := flattenMessageGroups(selected)
-	finalMessages := m.assembleMessagesWithNotesLocked(compacted)
+	finalMessages := compacted
 	maxUsable := m.maxUsableTokensLocked()
 	if defaultTarget > 0 && defaultTarget < maxUsable {
 		maxUsable = defaultTarget
@@ -307,21 +291,14 @@ func (m *Manager) autoCompactPreparedLocked(messages []llm.Message, now time.Tim
 		}
 	}
 	if estimateMessagesWithSystem(finalMessages, m.system, m.tokenizer) > maxUsable {
-		budget := maxUsable
-		if m.sessionNotes != nil {
-			budget -= m.tokenizer.EstimateMessage(llm.NewSystemMessage(m.sessionNotes.Content))
-			if budget < 0 {
-				budget = 0
-			}
-		}
-		compacted = keepRecentMessagesByTokens(compacted, budget, m.tokenizer)
-		finalMessages = m.assembleMessagesWithNotesLocked(compacted)
+		compacted = keepRecentMessagesWithinTotalBudget(compacted, m.system, maxUsable, m.tokenizer)
+		finalMessages = compacted
 	}
 
-	if estimateMessagesWithSystem(finalMessages, m.system, m.tokenizer) >= estimateMessagesWithSystem(m.assembleMessagesWithNotesLocked(messages), m.system, m.tokenizer) {
+	if estimateMessagesWithSystem(finalMessages, m.system, m.tokenizer) >= estimateMessagesWithSystem(messages, m.system, m.tokenizer) {
 		fallback := keepRecentMessagesWithinTotalBudget(messages, m.system, maxUsable, m.tokenizer)
-		finalMessages = m.assembleMessagesWithNotesLocked(fallback)
-		if estimateMessagesWithSystem(finalMessages, m.system, m.tokenizer) >= estimateMessagesWithSystem(m.assembleMessagesWithNotesLocked(messages), m.system, m.tokenizer) {
+		finalMessages = fallback
+		if estimateMessagesWithSystem(finalMessages, m.system, m.tokenizer) >= estimateMessagesWithSystem(messages, m.system, m.tokenizer) {
 			return messages, false
 		}
 		compacted = fallback
@@ -496,33 +473,6 @@ func (m *Manager) applyTimeBasedMicrocompactLocked(messages []llm.Message, now t
 	return result, cleared
 }
 
-func (m *Manager) maybeRefreshSessionNotesLocked(messages []llm.Message, sourceTokens int, now time.Time) bool {
-	if !m.config.NotesEnabled || sourceTokens < m.config.NotesInitTokens {
-		return false
-	}
-	if m.sessionNotes != nil && sourceTokens-m.sessionNotes.SourceTokenCount < m.config.NotesUpdateTokens {
-		return false
-	}
-
-	notes := buildSessionNotes(m.sessionNotes, messages, now, sourceTokens)
-	if m.sessionNotes != nil && m.sessionNotes.Content == notes.Content && m.sessionNotes.SourceTokenCount == notes.SourceTokenCount {
-		return false
-	}
-	m.sessionNotes = notes
-	return true
-}
-
-func (m *Manager) assembleMessagesWithNotesLocked(messages []llm.Message) []llm.Message {
-	if m.sessionNotes == nil || strings.TrimSpace(m.sessionNotes.Content) == "" {
-		return cloneMessages(messages)
-	}
-
-	result := make([]llm.Message, 0, len(messages)+1)
-	result = append(result, llm.NewSystemMessage(m.sessionNotes.Content))
-	result = append(result, messages...)
-	return result
-}
-
 func (m *Manager) persistToolResultLocked(toolName, callID, content string, now time.Time) (ToolArtifact, error) {
 	dir := strings.TrimSpace(m.toolResultDir)
 	if dir == "" {
@@ -612,154 +562,6 @@ func (m *Manager) buildPersistedToolResultPreviewLocked(callID, path, content st
 	return "", fmt.Errorf("persisted tool result preview exceeds context budget: %d tokens > %d", lastTokens, maxTokens)
 }
 
-func buildSessionNotes(previous *SessionNotes, messages []llm.Message, now time.Time, sourceTokens int) *SessionNotes {
-	worklog := make([]string, 0, 8)
-	openProblems := make([]string, 0, 6)
-	corrections := make([]string, 0, 6)
-	currentState := ""
-
-	for i := len(messages) - 1; i >= 0; i-- {
-		msg := messages[i]
-		text := summarizeMessageForNotes(msg)
-		if text == "" {
-			continue
-		}
-		if currentState == "" && (msg.Role == "assistant" || msg.Role == "user") {
-			currentState = text
-		}
-		if len(worklog) < 8 {
-			worklog = append([]string{text}, worklog...)
-		}
-		lower := strings.ToLower(text)
-		if looksLikeProblem(lower) && len(openProblems) < 6 {
-			openProblems = appendUniqueLine(openProblems, text)
-		}
-		if looksLikeCorrection(lower) && len(corrections) < 6 {
-			corrections = appendUniqueLine(corrections, text)
-		}
-	}
-
-	if currentState == "" {
-		currentState = "(no recent user or assistant state)"
-	}
-	if len(worklog) == 0 {
-		worklog = []string{"(no recent worklog)"}
-	}
-	if len(openProblems) == 0 {
-		openProblems = []string{"(no open problems captured)"}
-	}
-	if len(corrections) == 0 {
-		corrections = []string{"(no corrections captured)"}
-	}
-
-	priorSummary := "(none)"
-	if previous != nil && strings.TrimSpace(previous.Content) != "" {
-		priorSummary = trimForNotes(previous.Content, 1200)
-	}
-
-	var sb strings.Builder
-	sb.WriteString(sessionNotesHeader)
-	sb.WriteString("\n\nPrior Summary:\n")
-	sb.WriteString(priorSummary)
-	sb.WriteString("\n\nCurrent State:\n")
-	sb.WriteString(currentState)
-	sb.WriteString("\n\nOpen Problems:\n")
-	for _, line := range openProblems {
-		sb.WriteString("- ")
-		sb.WriteString(line)
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\nErrors & Corrections:\n")
-	for _, line := range corrections {
-		sb.WriteString("- ")
-		sb.WriteString(line)
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\nWorklog:\n")
-	for _, line := range worklog {
-		sb.WriteString("- ")
-		sb.WriteString(line)
-		sb.WriteString("\n")
-	}
-
-	return &SessionNotes{
-		Content:          strings.TrimSpace(sb.String()),
-		UpdatedAt:        now,
-		SourceTokenCount: sourceTokens,
-	}
-}
-
-func summarizeMessageForNotes(msg llm.Message) string {
-	switch msg.Role {
-	case "user":
-		return "user: " + trimForNotes(msg.Content, 160)
-	case "assistant":
-		parts := make([]string, 0, 1+len(msg.ToolCalls))
-		if text := strings.TrimSpace(msg.Content); text != "" {
-			parts = append(parts, trimForNotes(text, 160))
-		}
-		for _, tc := range msg.ToolCalls {
-			if name := strings.TrimSpace(tc.Function.Name); name != "" {
-				parts = append(parts, "called "+name)
-			}
-		}
-		if len(parts) == 0 {
-			return ""
-		}
-		return "assistant: " + strings.Join(parts, "; ")
-	case "tool":
-		content := strings.TrimSpace(msg.Content)
-		if content == "" {
-			return ""
-		}
-		if content == clearedToolResultMessage {
-			return "tool: old tool result content cleared"
-		}
-		return "tool: " + trimForNotes(content, 160)
-	default:
-		return ""
-	}
-}
-
-func trimForNotes(text string, maxRunes int) string {
-	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
-	if text == "" {
-		return ""
-	}
-	runes := []rune(text)
-	if maxRunes <= 0 || len(runes) <= maxRunes {
-		return text
-	}
-	if maxRunes <= 3 {
-		return string(runes[:maxRunes])
-	}
-	return string(runes[:maxRunes-3]) + "..."
-}
-
-func appendUniqueLine(lines []string, line string) []string {
-	for _, existing := range lines {
-		if existing == line {
-			return lines
-		}
-	}
-	return append(lines, line)
-}
-
-func looksLikeProblem(lower string) bool {
-	return strings.Contains(lower, "error") ||
-		strings.Contains(lower, "fail") ||
-		strings.Contains(lower, "denied") ||
-		strings.Contains(lower, "missing") ||
-		strings.Contains(lower, "not found")
-}
-
-func looksLikeCorrection(lower string) bool {
-	return strings.Contains(lower, "fixed") ||
-		strings.Contains(lower, "updated") ||
-		strings.Contains(lower, "retry") ||
-		strings.Contains(lower, "resolved")
-}
-
 func countTextMessages(group []llm.Message) int {
 	total := 0
 	for _, msg := range group {
@@ -778,23 +580,6 @@ func countTextMessagesInGroups(groups []messageGroup) int {
 		total += countTextMessages(group.Messages)
 	}
 	return total
-}
-
-func stripSessionNotesMessages(messages []llm.Message) ([]llm.Message, bool) {
-	result := make([]llm.Message, 0, len(messages))
-	removed := false
-	for _, msg := range messages {
-		if isSessionNotesMessage(msg) {
-			removed = true
-			continue
-		}
-		result = append(result, msg)
-	}
-	return result, removed
-}
-
-func isSessionNotesMessage(msg llm.Message) bool {
-	return msg.Role == "system" && strings.HasPrefix(strings.TrimSpace(msg.Content), sessionNotesHeader)
 }
 
 func isPersistedToolResultMessage(content string) bool {
@@ -870,7 +655,6 @@ func cloneCompressionStateLocked(m *Manager) *CompressionState {
 	state := &CompressionState{
 		LastAssistantAt: cloneTimePtrLocked(m.lastAssistantAt),
 		ToolArtifacts:   make([]ToolArtifact, 0, len(m.toolArtifacts)),
-		SessionNotes:    cloneSessionNotesLocked(m.sessionNotes),
 	}
 	ids := make([]string, 0, len(m.toolArtifacts))
 	for id := range m.toolArtifacts {
@@ -884,14 +668,6 @@ func cloneCompressionStateLocked(m *Manager) *CompressionState {
 }
 
 func cloneTimePtrLocked(v *time.Time) *time.Time {
-	if v == nil {
-		return nil
-	}
-	copy := *v
-	return &copy
-}
-
-func cloneSessionNotesLocked(v *SessionNotes) *SessionNotes {
 	if v == nil {
 		return nil
 	}

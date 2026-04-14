@@ -131,34 +131,19 @@ func ApplyEnvOverrides(cfg *Config) {
 			cfg.Context.AutoCompactBufferTokens = i
 		}
 	}
-	if v := os.Getenv("MSCLI_NOTES_ENABLED"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.Context.NotesEnabled = b
+	if v := os.Getenv("MSCLI_AUTOCOMPACT_MIN_TAIL_TOKENS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.AutoCompactMinTailTokens = i
 		}
 	}
-	if v := os.Getenv("MSCLI_NOTES_INIT_TOKENS"); v != "" {
+	if v := os.Getenv("MSCLI_AUTOCOMPACT_MAX_TAIL_TOKENS"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Context.NotesInitTokens = i
+			cfg.Context.AutoCompactMaxTailTokens = i
 		}
 	}
-	if v := os.Getenv("MSCLI_NOTES_UPDATE_TOKENS"); v != "" {
+	if v := os.Getenv("MSCLI_AUTOCOMPACT_MIN_MESSAGES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Context.NotesUpdateTokens = i
-		}
-	}
-	if v := os.Getenv("MSCLI_NOTES_MIN_TAIL_TOKENS"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Context.NotesMinTailTokens = i
-		}
-	}
-	if v := os.Getenv("MSCLI_NOTES_MAX_TAIL_TOKENS"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Context.NotesMaxTailTokens = i
-		}
-	}
-	if v := os.Getenv("MSCLI_NOTES_MIN_MESSAGES"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Context.NotesMinMessages = i
+			cfg.Context.AutoCompactMinMessages = i
 		}
 	}
 	if contextWindowSet && !contextReserveSet {

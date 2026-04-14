@@ -38,7 +38,6 @@ func compressionSnapshotFromState(state *agentctx.CompressionState) *session.Com
 	result := &session.CompressionState{
 		LastAssistantAt: cloneTimePtr(state.LastAssistantAt),
 		ToolArtifacts:   make([]session.ToolArtifact, 0, len(state.ToolArtifacts)),
-		SessionNotes:    compressionSessionNotesToSnapshot(state.SessionNotes),
 	}
 	for _, artifact := range state.ToolArtifacts {
 		result.ToolArtifacts = append(result.ToolArtifacts, session.ToolArtifact{
@@ -79,7 +78,6 @@ func restoreCompressionSnapshot(cm *agentctx.Manager, state *session.Compression
 	result := &agentctx.CompressionState{
 		LastAssistantAt: cloneTimePtr(state.LastAssistantAt),
 		ToolArtifacts:   make([]agentctx.ToolArtifact, 0, len(state.ToolArtifacts)),
-		SessionNotes:    compressionSnapshotToSessionNotes(state.SessionNotes),
 	}
 	for _, artifact := range state.ToolArtifacts {
 		result.ToolArtifacts = append(result.ToolArtifacts, agentctx.ToolArtifact{
@@ -126,28 +124,6 @@ func derefProviderUsage(usage *llm.Usage) llm.Usage {
 		return llm.Usage{}
 	}
 	return usage.Clone()
-}
-
-func compressionSessionNotesToSnapshot(state *agentctx.SessionNotes) *session.SessionNotesState {
-	if state == nil {
-		return nil
-	}
-	return &session.SessionNotesState{
-		Content:          state.Content,
-		UpdatedAt:        state.UpdatedAt,
-		SourceTokenCount: state.SourceTokenCount,
-	}
-}
-
-func compressionSnapshotToSessionNotes(state *session.SessionNotesState) *agentctx.SessionNotes {
-	if state == nil {
-		return nil
-	}
-	return &agentctx.SessionNotes{
-		Content:          state.Content,
-		UpdatedAt:        state.UpdatedAt,
-		SourceTokenCount: state.SourceTokenCount,
-	}
 }
 
 func cloneTimePtr(v *time.Time) *time.Time {

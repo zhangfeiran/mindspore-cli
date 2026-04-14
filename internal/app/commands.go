@@ -541,12 +541,6 @@ func formatContextUsageMessage(details agentctx.TokenUsageDetails, compressionSt
 		if v, ok := compressionStats["last_assistant_at"]; ok && v != nil {
 			lines = append(lines, fmt.Sprintf("  last_assistant_at: %v", v))
 		}
-		if v, ok := compressionStats["session_notes_active"]; ok {
-			lines = append(lines, fmt.Sprintf("  session_notes_active: %v", v))
-		}
-		if notes, ok := compressionStats["session_notes"].(*agentctx.SessionNotes); ok && notes != nil && !notes.UpdatedAt.IsZero() {
-			lines = append(lines, fmt.Sprintf("  session_notes_updated_at: %s", notes.UpdatedAt.Format(time.RFC3339)))
-		}
 	}
 
 	return strings.Join(lines, "\n")
