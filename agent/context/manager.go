@@ -15,6 +15,8 @@ type ManagerConfig struct {
 	ContextWindow            int
 	ReserveTokens            int
 	CompactionThreshold      float64
+	CompactMode              string
+	CompactSummaryMaxTokens  int
 	ToolResultMaxChars       int
 	ToolResultBatchChars     int
 	ToolResultPreviewBytes   int
@@ -37,6 +39,8 @@ func DefaultManagerConfig() ManagerConfig {
 		ContextWindow:            configs.DefaultContextWindow,
 		ReserveTokens:            configs.DefaultReserveTokens(configs.DefaultContextWindow),
 		CompactionThreshold:      0.9,
+		CompactMode:              configs.DefaultCompactMode,
+		CompactSummaryMaxTokens:  configs.DefaultCompactSummaryMaxTokens,
 		ToolResultMaxChars:       configs.DefaultToolResultMaxChars,
 		ToolResultBatchChars:     configs.DefaultToolResultBatchChars,
 		ToolResultPreviewBytes:   configs.DefaultToolResultPreviewBytes,
@@ -141,6 +145,12 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.CompactionThreshold == 0 {
 		cfg.CompactionThreshold = 0.9
 	}
+	if strings.TrimSpace(cfg.CompactMode) == "" {
+		cfg.CompactMode = configs.CompactModeLocal
+	}
+	if cfg.CompactSummaryMaxTokens == 0 {
+		cfg.CompactSummaryMaxTokens = configs.DefaultCompactSummaryMaxTokens
+	}
 	if cfg.ToolResultMaxChars == 0 {
 		cfg.ToolResultMaxChars = configs.DefaultToolResultMaxChars
 	}
@@ -232,7 +242,7 @@ func (m *Manager) AddMessage(msg llm.Message) error {
 	m.messages = append(m.messages, msg)
 
 	// 后置压缩：基于最新上下文做决策，避免仅靠预估触发
-	if m.shouldCompactLocked(0) {
+	if !m.usesSummaryCompactLocked() && m.shouldCompactLocked(0) {
 		if err := m.compactLocked(); err != nil {
 			return fmt.Errorf("compact context: %w", err)
 		}
@@ -347,6 +357,14 @@ func (m *Manager) Compact() error {
 
 	_, err := m.prepareLocked(time.Now(), true)
 	return err
+}
+
+// UsesSummaryCompact reports whether LLM-backed summarization compaction is enabled.
+func (m *Manager) UsesSummaryCompact() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.usesSummaryCompactLocked()
 }
 
 // TokenUsage returns current token usage.
@@ -665,6 +683,10 @@ func (m *Manager) clearProviderTokenUsageLocked() {
 
 func (m *Manager) maxUsableTokensLocked() int {
 	return m.config.ContextWindow - m.config.ReserveTokens
+}
+
+func (m *Manager) usesSummaryCompactLocked() bool {
+	return strings.EqualFold(strings.TrimSpace(m.config.CompactMode), configs.CompactModeSummary)
 }
 
 // countByRole counts messages by role (must hold lock).

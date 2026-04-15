@@ -109,3 +109,46 @@ func TestCmdCompactInDebugModePersistsPreCompactSnapshot(t *testing.T) {
 		}
 	}
 }
+
+func TestCmdCompactUsesLLMSummaryInSummaryMode(t *testing.T) {
+	ctxManager := agentctx.NewManager(agentctx.ManagerConfig{
+		ContextWindow:            220,
+		ReserveTokens:            20,
+		CompactionThreshold:      0.9,
+		CompactMode:              "summary",
+		CompactSummaryMaxTokens:  64,
+		AutoCompactMaxTailTokens: 80,
+		AutoCompactMinTailTokens: 40,
+		AutoCompactMinMessages:   1,
+	})
+	for i := 0; i < 6; i++ {
+		if err := ctxManager.AddMessage(llm.NewUserMessage(strings.Repeat("x", 160))); err != nil {
+			t.Fatalf("AddMessage #%d failed: %v", i+1, err)
+		}
+	}
+
+	app := newModelCommandTestApp()
+	app.ctxManager = ctxManager
+	app.provider = &singleReplyProvider{content: "<analysis>draft</analysis><summary>compact summary</summary>"}
+	app.Config.Context.CompactSummaryMaxTokens = 64
+
+	app.cmdCompact()
+
+	drainUntilEventType(t, app, model.AgentThinking)
+	drainUntilEventType(t, app, model.TokenUpdate)
+	reply := drainUntilEventType(t, app, model.AgentReply)
+
+	messages := ctxManager.GetNonSystemMessages()
+	if len(messages) == 0 {
+		t.Fatal("post-compact messages empty")
+	}
+	if !strings.Contains(messages[0].Content, "Summary:\ncompact summary") {
+		t.Fatalf("summary message = %q, want LLM summary", messages[0].Content)
+	}
+	if strings.Contains(messages[0].Content, "draft") {
+		t.Fatalf("summary message leaked analysis block: %q", messages[0].Content)
+	}
+	if !strings.Contains(reply.Message, "Context compacted:") {
+		t.Fatalf("reply message = %q, want compaction summary", reply.Message)
+	}
+}

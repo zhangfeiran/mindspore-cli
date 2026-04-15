@@ -44,10 +44,13 @@ type CompressionState struct {
 type PrepareResult struct {
 	Changed              bool
 	AutoCompacted        bool
+	LLMCompacted         bool
+	LocalFallback        bool
 	ToolResultsPersisted int
 	ToolResultsCleared   int
 	BeforeTokens         int
 	AfterTokens          int
+	CompactionUsage      llm.Usage
 }
 
 func (m *Manager) SetToolResultArtifactDir(dir string) {
@@ -189,7 +192,7 @@ func (m *Manager) addPreparedMessageLocked(msg llm.Message) error {
 
 	m.messages = append(m.messages, msg)
 
-	if m.shouldCompactLocked(0) {
+	if !m.usesSummaryCompactLocked() && m.shouldCompactLocked(0) {
 		if err := m.compactLocked(); err != nil {
 			return fmt.Errorf("compact context: %w", err)
 		}

@@ -234,6 +234,8 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	managerCfg.ContextWindow = config.Context.Window
 	managerCfg.ReserveTokens = config.Context.ReserveTokens
 	managerCfg.CompactionThreshold = config.Context.CompactionThreshold
+	managerCfg.CompactMode = config.Context.CompactMode
+	managerCfg.CompactSummaryMaxTokens = config.Context.CompactSummaryMaxTokens
 	managerCfg.ToolResultMaxChars = config.Context.ToolResultMaxChars
 	managerCfg.ToolResultBatchChars = config.Context.ToolResultBatchChars
 	managerCfg.ToolResultPreviewBytes = config.Context.ToolResultPreviewBytes

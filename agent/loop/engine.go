@@ -184,7 +184,11 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 		return ex.events, err
 	}
 	ex.emitContextCompactionNotice(notice)
-	if notice, err := ex.prepareContextForRequest(); err != nil {
+	compactCtx := ctx
+	if ex.engine.debugDumper != nil {
+		compactCtx = llm.WithDebugDumper(compactCtx, ex.engine.debugDumper)
+	}
+	if notice, err := ex.prepareContextForRequest(compactCtx); err != nil {
 		ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Prepare context error: %v", err)))
 		return ex.events, err
 	} else {
@@ -243,7 +247,10 @@ func (ex *executor) callLLM(ctx context.Context) (*llm.CompletionResponse, error
 	defer cancel()
 
 	ex.sanitizeToolPairsBeforeRequest()
-	if notice, err := ex.prepareContextForRequest(); err != nil {
+	if ex.engine.debugDumper != nil {
+		llmCtx = llm.WithDebugDumper(llmCtx, ex.engine.debugDumper)
+	}
+	if notice, err := ex.prepareContextForRequest(llmCtx); err != nil {
 		return nil, fmt.Errorf("prepare context: %w", err)
 	} else {
 		ex.emitContextCompactionNotice(notice)
@@ -258,9 +265,6 @@ func (ex *executor) callLLM(ctx context.Context) (*llm.CompletionResponse, error
 
 	if ex.usesResponsesChain() && ex.responsesPreviousID != "" {
 		llmCtx = llm.WithPreviousResponseID(llmCtx, ex.responsesPreviousID)
-	}
-	if ex.engine.debugDumper != nil {
-		llmCtx = llm.WithDebugDumper(llmCtx, ex.engine.debugDumper)
 	}
 
 	resp, err := ex.streamCompletion(llmCtx, req)
@@ -750,13 +754,23 @@ func (ex *executor) addToolResult(callID, content string) (*contextCompactionNot
 	return notice, nil
 }
 
-func (ex *executor) prepareContextForRequest() (*contextCompactionNotice, error) {
+func (ex *executor) prepareContextForRequest(ctx context.Context) (*contextCompactionNotice, error) {
 	if ex.engine == nil || ex.engine.ctxManager == nil {
 		return nil, nil
 	}
 
 	preCompact := ex.capturePreCompactSnapshot("auto")
-	result, err := ex.engine.ctxManager.PrepareForRequest(time.Now())
+	var (
+		result ctxmanager.PrepareResult
+		err    error
+	)
+	if ex.engine.ctxManager.UsesSummaryCompact() {
+		result, err = ex.engine.ctxManager.PrepareForRequestWithSummary(ctx, ex.engine.provider, ctxmanager.SummaryCompactOptions{
+			LocalFallback: true,
+		}, time.Now())
+	} else {
+		result, err = ex.engine.ctxManager.PrepareForRequest(time.Now())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -764,6 +778,8 @@ func (ex *executor) prepareContextForRequest() (*contextCompactionNotice, error)
 		if err := ex.persistPreCompactSnapshot(preCompact); err != nil {
 			return nil, err
 		}
+		ex.responsesPreviousID = ""
+		ex.responsesFollowup = nil
 	}
 	if result.Changed {
 		if err := ex.persistSnapshot(); err != nil {

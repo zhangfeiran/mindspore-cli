@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	ctxmanager "github.com/mindspore-lab/mindspore-cli/agent/context"
@@ -14,6 +15,33 @@ import (
 type captureProvider struct {
 	lastReq *llm.CompletionRequest
 }
+
+type summaryThenStreamProvider struct {
+	completeCalls int
+	streamReq     *llm.CompletionRequest
+}
+
+func (p *summaryThenStreamProvider) Name() string { return "summary-then-stream" }
+
+func (p *summaryThenStreamProvider) Complete(context.Context, *llm.CompletionRequest) (*llm.CompletionResponse, error) {
+	p.completeCalls++
+	return &llm.CompletionResponse{
+		Content:      "<analysis>draft</analysis><summary>auto compact summary</summary>",
+		FinishReason: llm.FinishStop,
+		Usage:        llm.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120},
+	}, nil
+}
+
+func (p *summaryThenStreamProvider) CompleteStream(ctx context.Context, req *llm.CompletionRequest) (llm.StreamIterator, error) {
+	copied := *req
+	copied.Messages = append([]llm.Message(nil), req.Messages...)
+	p.streamReq = &copied
+	return (&captureProvider{}).CompleteStream(ctx, req)
+}
+
+func (p *summaryThenStreamProvider) SupportsTools() bool { return true }
+
+func (p *summaryThenStreamProvider) AvailableModels() []llm.ModelInfo { return nil }
 
 func (p *captureProvider) Name() string {
 	return "capture"
@@ -182,6 +210,57 @@ func TestRunPassesModelMaxTokensToProvider(t *testing.T) {
 	}
 }
 
+func TestRunAutoCompactsWithLLMSummaryBeforeRequest(t *testing.T) {
+	provider := &summaryThenStreamProvider{}
+	engine := NewEngine(EngineConfig{
+		MaxIterations: 1,
+		ContextWindow: 220,
+	}, provider, tools.NewRegistry())
+
+	cm := ctxmanager.NewManager(ctxmanager.ManagerConfig{
+		ContextWindow:            220,
+		ReserveTokens:            20,
+		CompactMode:              "summary",
+		AutoCompactMaxTailTokens: 80,
+		AutoCompactMinTailTokens: 40,
+		AutoCompactMinMessages:   1,
+	})
+	cm.SetSystemPrompt("system")
+	for i := 0; i < 6; i++ {
+		if err := cm.AddMessage(llm.NewUserMessage(strings.Repeat("x", 160))); err != nil {
+			t.Fatalf("AddMessage #%d failed: %v", i+1, err)
+		}
+	}
+	engine.SetContextManager(cm)
+
+	events, err := engine.Run(Task{ID: "compact", Description: "continue"})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if provider.completeCalls != 1 {
+		t.Fatalf("summary Complete calls = %d, want 1", provider.completeCalls)
+	}
+	if provider.streamReq == nil || len(provider.streamReq.Messages) == 0 {
+		t.Fatal("main stream request missing")
+	}
+	summaryMessage := ""
+	for _, msg := range provider.streamReq.Messages {
+		if strings.Contains(msg.Content, "auto compact summary") {
+			summaryMessage = msg.Content
+			break
+		}
+	}
+	if !strings.Contains(summaryMessage, "Summary:\nauto compact summary") {
+		t.Fatalf("main request messages = %#v, want compact summary after system", provider.streamReq.Messages)
+	}
+	if strings.Contains(summaryMessage, "draft") {
+		t.Fatalf("compact summary leaked analysis block: %q", summaryMessage)
+	}
+	if !hasLoopEvent(events, EventContextCompacted) {
+		t.Fatalf("events missing %s: %#v", EventContextCompacted, events)
+	}
+}
+
 func TestRunCompletesWhenStopOccursAtIterationLimit(t *testing.T) {
 	provider := &scriptedStreamProvider{
 		responses: []*llm.CompletionResponse{{
@@ -210,6 +289,15 @@ func TestRunCompletesWhenStopOccursAtIterationLimit(t *testing.T) {
 	if got, want := last.Type, EventTaskCompleted; got != want {
 		t.Fatalf("last event type = %q, want %q", got, want)
 	}
+}
+
+func hasLoopEvent(events []Event, eventType string) bool {
+	for _, ev := range events {
+		if ev.Type == eventType {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunFailsWhenIterationBudgetExpiresBeforeCompletion(t *testing.T) {

@@ -101,6 +101,14 @@ func ApplyEnvOverrides(cfg *Config) {
 			contextReserveSet = true
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv("MSCLI_COMPACT_MODE")); v != "" {
+		cfg.Context.CompactMode = v
+	}
+	if v := os.Getenv("MSCLI_COMPACT_SUMMARY_MAX_TOKENS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Context.CompactSummaryMaxTokens = i
+		}
+	}
 	if v := os.Getenv("MSCLI_TOOL_RESULT_MAX_CHARS"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			cfg.Context.ToolResultMaxChars = i

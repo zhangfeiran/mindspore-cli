@@ -431,6 +431,7 @@ func TestCompactManuallyHalvesCurrentUsage(t *testing.T) {
 	cfg := DefaultManagerConfig()
 	cfg.ContextWindow = 100
 	cfg.ReserveTokens = 10
+	cfg.CompactMode = "local"
 	cfg.EnableSmartCompact = false
 
 	mgr := NewManager(cfg)
@@ -460,6 +461,7 @@ func TestAddMessageCompactsToTargetAfterThresholdExceeded(t *testing.T) {
 	cfg := DefaultManagerConfig()
 	cfg.ContextWindow = 100
 	cfg.ReserveTokens = 10
+	cfg.CompactMode = "local"
 	cfg.EnableSmartCompact = false
 
 	mgr := NewManager(cfg)

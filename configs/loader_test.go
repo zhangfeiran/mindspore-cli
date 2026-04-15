@@ -14,6 +14,12 @@ func TestDefaultConfigProvider(t *testing.T) {
 	if got, want := cfg.Context.ReserveTokens, 20000; got != want {
 		t.Fatalf("default context.reserve_tokens = %d, want %d", got, want)
 	}
+	if got, want := cfg.Context.CompactMode, CompactModeSummary; got != want {
+		t.Fatalf("default context.compact_mode = %q, want %q", got, want)
+	}
+	if got, want := cfg.Context.CompactSummaryMaxTokens, DefaultCompactSummaryMaxTokens; got != want {
+		t.Fatalf("default context.compact_summary_max_tokens = %d, want %d", got, want)
+	}
 }
 
 func TestLoadWithEnv_UsesDefaultsAndEnvOverrides(t *testing.T) {
@@ -33,6 +39,8 @@ func TestLoadWithEnv_UsesDefaultsAndEnvOverrides(t *testing.T) {
 	t.Setenv("MSCLI_MAX_TOKENS", "4096")
 	t.Setenv("MSCLI_MAX_ITERATIONS", "7")
 	t.Setenv("MSCLI_CONTEXT_WINDOW", "16000")
+	t.Setenv("MSCLI_COMPACT_MODE", "local")
+	t.Setenv("MSCLI_COMPACT_SUMMARY_MAX_TOKENS", "1234")
 	t.Setenv("MSCLI_UI_ENABLED", "false")
 
 	cfg, err := LoadWithEnv()
@@ -75,6 +83,12 @@ func TestLoadWithEnv_UsesDefaultsAndEnvOverrides(t *testing.T) {
 	}
 	if got, want := cfg.Context.ReserveTokens, 1600; got != want {
 		t.Fatalf("context.reserve_tokens = %d, want %d", got, want)
+	}
+	if got, want := cfg.Context.CompactMode, "local"; got != want {
+		t.Fatalf("context.compact_mode = %q, want %q", got, want)
+	}
+	if got, want := cfg.Context.CompactSummaryMaxTokens, 1234; got != want {
+		t.Fatalf("context.compact_summary_max_tokens = %d, want %d", got, want)
 	}
 	if got, want := cfg.UI.Enabled, false; got != want {
 		t.Fatalf("ui.enabled = %v, want %v", got, want)
@@ -210,6 +224,8 @@ func clearEnv(t *testing.T) {
 		"MSCLI_TIMEOUT",
 		"MSCLI_CONTEXT_WINDOW",
 		"MSCLI_CONTEXT_RESERVE",
+		"MSCLI_COMPACT_MODE",
+		"MSCLI_COMPACT_SUMMARY_MAX_TOKENS",
 		"MSCLI_TOOL_RESULT_MAX_CHARS",
 		"MSCLI_TOOL_RESULT_BATCH_CHARS",
 		"MSCLI_TOOL_RESULT_PREVIEW_BYTES",

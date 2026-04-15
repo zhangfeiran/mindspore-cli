@@ -77,6 +77,8 @@ type ContextConfig struct {
 	Window                   int     `yaml:"window"`
 	ReserveTokens            int     `yaml:"reserve_tokens"`
 	CompactionThreshold      float64 `yaml:"compaction_threshold"`
+	CompactMode              string  `yaml:"compact_mode"`
+	CompactSummaryMaxTokens  int     `yaml:"compact_summary_max_tokens"`
 	ToolResultMaxChars       int     `yaml:"tool_result_max_chars"`
 	ToolResultBatchChars     int     `yaml:"tool_result_batch_chars"`
 	ToolResultPreviewBytes   int     `yaml:"tool_result_preview_bytes"`
@@ -90,6 +92,11 @@ type ContextConfig struct {
 
 const DefaultContextWindow = 200000
 const (
+	CompactModeLocal   = "local"
+	CompactModeSummary = "summary"
+
+	DefaultCompactMode              = CompactModeSummary
+	DefaultCompactSummaryMaxTokens  = 20000
 	DefaultToolResultMaxChars       = 50000
 	DefaultToolResultBatchChars     = 200000
 	DefaultToolResultPreviewBytes   = 2000
@@ -167,6 +174,8 @@ func DefaultConfig() *Config {
 			Window:                   DefaultContextWindow,
 			ReserveTokens:            DefaultReserveTokens(DefaultContextWindow),
 			CompactionThreshold:      0.9,
+			CompactMode:              DefaultCompactMode,
+			CompactSummaryMaxTokens:  DefaultCompactSummaryMaxTokens,
 			ToolResultMaxChars:       DefaultToolResultMaxChars,
 			ToolResultBatchChars:     DefaultToolResultBatchChars,
 			ToolResultPreviewBytes:   DefaultToolResultPreviewBytes,
@@ -264,6 +273,14 @@ func (c *Config) Validate() error {
 	if c.Context.AutoCompactMinMessages < 0 {
 		return fmt.Errorf("autocompact_min_messages must be non-negative")
 	}
+	switch strings.ToLower(strings.TrimSpace(c.Context.CompactMode)) {
+	case "", CompactModeLocal, CompactModeSummary:
+	default:
+		return fmt.Errorf("compact_mode must be %q or %q", CompactModeLocal, CompactModeSummary)
+	}
+	if c.Context.CompactSummaryMaxTokens < 0 {
+		return fmt.Errorf("compact_summary_max_tokens must be non-negative")
+	}
 
 	return nil
 }
@@ -315,6 +332,12 @@ func (c *Config) Merge(other *Config) {
 	if other.Context.CompactionThreshold != 0 {
 		c.Context.CompactionThreshold = other.Context.CompactionThreshold
 	}
+	if strings.TrimSpace(other.Context.CompactMode) != "" {
+		c.Context.CompactMode = other.Context.CompactMode
+	}
+	if other.Context.CompactSummaryMaxTokens != 0 {
+		c.Context.CompactSummaryMaxTokens = other.Context.CompactSummaryMaxTokens
+	}
 	if other.Context.ToolResultMaxChars != 0 {
 		c.Context.ToolResultMaxChars = other.Context.ToolResultMaxChars
 	}
@@ -351,6 +374,8 @@ func (c *ContextConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		LegacyMaxTokens          int     `yaml:"max_tokens"`
 		ReserveTokens            int     `yaml:"reserve_tokens"`
 		CompactionThreshold      float64 `yaml:"compaction_threshold"`
+		CompactMode              string  `yaml:"compact_mode"`
+		CompactSummaryMaxTokens  int     `yaml:"compact_summary_max_tokens"`
 		ToolResultMaxChars       int     `yaml:"tool_result_max_chars"`
 		ToolResultBatchChars     int     `yaml:"tool_result_batch_chars"`
 		ToolResultPreviewBytes   int     `yaml:"tool_result_preview_bytes"`
@@ -373,6 +398,8 @@ func (c *ContextConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	c.ReserveTokens = raw.ReserveTokens
 	c.CompactionThreshold = raw.CompactionThreshold
+	c.CompactMode = raw.CompactMode
+	c.CompactSummaryMaxTokens = raw.CompactSummaryMaxTokens
 	c.ToolResultMaxChars = raw.ToolResultMaxChars
 	c.ToolResultBatchChars = raw.ToolResultBatchChars
 	c.ToolResultPreviewBytes = raw.ToolResultPreviewBytes

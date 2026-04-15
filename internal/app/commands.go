@@ -468,7 +468,23 @@ func (a *Application) cmdCompact() {
 		}
 		return
 	}
-	if err := a.ctxManager.Compact(); err != nil {
+	var err error
+	if a.ctxManager.UsesSummaryCompact() {
+		ctx := context.Background()
+		if a.llmDebugDumper != nil {
+			ctx = llm.WithDebugDumper(ctx, a.llmDebugDumper)
+		}
+		maxSummaryTokens := 0
+		if a.Config != nil {
+			maxSummaryTokens = a.Config.Context.CompactSummaryMaxTokens
+		}
+		_, err = a.ctxManager.CompactWithSummary(ctx, a.provider, agentctx.SummaryCompactOptions{
+			MaxSummaryTokens: maxSummaryTokens,
+		})
+	} else {
+		err = a.ctxManager.Compact()
+	}
+	if err != nil {
 		a.EventCh <- model.Event{
 			Type:     model.ToolError,
 			ToolName: "context",
