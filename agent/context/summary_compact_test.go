@@ -78,6 +78,13 @@ func TestCompactWithSummaryGeneratesSummaryAndPreservesTail(t *testing.T) {
 	if got := provider.reqs[0].MaxTokens; got == nil || *got != 64 {
 		t.Fatalf("summary request max tokens = %v, want 64", got)
 	}
+	summaryPrompt := provider.reqs[0].Messages[len(provider.reqs[0].Messages)-1].Content
+	if !strings.Contains(summaryPrompt, strings.Repeat("a", 160)) {
+		t.Fatalf("summary prompt missing oldest context")
+	}
+	if !strings.Contains(summaryPrompt, strings.Repeat("f", 160)) {
+		t.Fatalf("summary prompt missing newest context")
+	}
 
 	messages := mgr.GetNonSystemMessages()
 	if len(messages) >= beforeCount {

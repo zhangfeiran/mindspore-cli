@@ -114,7 +114,8 @@ func (m *Manager) buildSummaryCompactPlan(now time.Time, force bool, localFallba
 		return nil, &result, nil
 	}
 
-	keptGroups, summarizeGroups, targetTokens := m.selectSummaryCompactGroupsLocked(working)
+	keptGroups, _, targetTokens := m.selectSummaryCompactGroupsLocked(working)
+	summarizeGroups := groupMessages(working)
 	if len(summarizeGroups) == 0 {
 		if localFallback {
 			return nil, nil, errSummaryCompactNoSummarizable
