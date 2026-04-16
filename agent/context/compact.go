@@ -20,6 +20,8 @@ const (
 	CompactStrategyPriority
 	// CompactStrategyHybrid 混合策略：结合多种策略
 	CompactStrategyHybrid
+	// CompactStrategyLLM LLM 摘要策略：调用模型生成继续会话摘要
+	CompactStrategyLLM
 )
 
 // String 返回策略名称
@@ -33,6 +35,8 @@ func (s CompactStrategy) String() string {
 		return "priority"
 	case CompactStrategyHybrid:
 		return "hybrid"
+	case CompactStrategyLLM:
+		return "llm"
 	default:
 		return "unknown"
 	}
@@ -49,6 +53,8 @@ func ParseCompactStrategy(s string) CompactStrategy {
 		return CompactStrategyPriority
 	case "hybrid":
 		return CompactStrategyHybrid
+	case "llm":
+		return CompactStrategyLLM
 	default:
 		return CompactStrategySimple
 	}

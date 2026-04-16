@@ -64,6 +64,7 @@ func NewEngine(cfg EngineConfig, provider llm.Provider, tools *tools.Registry) *
 		managerCfg.ContextWindow = cfg.ContextWindow
 		managerCfg.ReserveTokens = configs.DefaultReserveTokens(managerCfg.ContextWindow)
 	}
+	managerCfg.CompactProvider = provider
 	engine.ctxManager = ctxmanager.NewManager(managerCfg)
 	engine.ctxManager.SetSystemPrompt(cfg.SystemPrompt)
 	engine.permission = permission.NewNoOpPermissionService()
@@ -84,6 +85,8 @@ func (e *Engine) SetContextManager(cm *ctxmanager.Manager) {
 			cm.SetSystemPrompt(e.config.SystemPrompt)
 		}
 	}
+	cm.SetCompactProvider(e.provider)
+	cm.SetDebugDumper(e.debugDumper)
 	e.ctxManager = cm
 }
 
@@ -100,6 +103,9 @@ func (e *Engine) SetTrajectoryRecorder(recorder *TrajectoryRecorder) {
 // SetLLMDebugDumper enables raw request/response dumping for LLM calls.
 func (e *Engine) SetLLMDebugDumper(dumper *llm.DebugDumper) {
 	e.debugDumper = dumper
+	if e.ctxManager != nil {
+		e.ctxManager.SetDebugDumper(dumper)
+	}
 }
 
 // ToolNames returns the names of registered tools.
@@ -159,7 +165,7 @@ type contextCompactionNotice struct {
 }
 
 func (ex *executor) run(ctx context.Context) ([]Event, error) {
-	notice, err := ex.addContextMessage(llm.NewUserMessage(ex.task.Description))
+	notice, err := ex.addContextMessage(ctx, llm.NewUserMessage(ex.task.Description))
 	if err != nil {
 		ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist message error: %v", err)))
 		return ex.events, err
@@ -368,7 +374,7 @@ func (ex *executor) applyStreamChunk(resp *llm.CompletionResponse, chunk *llm.St
 }
 
 func (ex *executor) handleResponse(ctx context.Context, resp *llm.CompletionResponse) (bool, error) {
-	notice, err := ex.addContextMessage(llm.Message{
+	notice, err := ex.addContextMessage(ctx, llm.Message{
 		Role:      "assistant",
 		Content:   resp.Content,
 		ToolCalls: resp.ToolCalls,
@@ -425,7 +431,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	tool, ok := ex.engine.tools.Get(toolName)
 	if !ok {
 		errMsg := fmt.Sprintf("Tool not found: %s", toolName)
-		notice, err := ex.addToolResultWithFallback(tc.ID, errMsg)
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
 		if err != nil {
 			return err
 		}
@@ -447,7 +453,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	}
 	if !granted {
 		errMsg := fmt.Sprintf("Permission denied for tool: %s", toolName)
-		notice, err := ex.addToolResultWithFallback(tc.ID, errMsg)
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
 		if err != nil {
 			return err
 		}
@@ -482,7 +488,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 			return context.Canceled
 		}
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
-		notice, err := ex.addToolResultWithFallback(tc.ID, errMsg)
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
 		if err != nil {
 			return err
 		}
@@ -502,7 +508,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 			return context.Canceled
 		}
 		errMsg := result.Error.Error()
-		notice, err := ex.addToolResultWithFallback(tc.ID, errMsg)
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
 		if err != nil {
 			return err
 		}
@@ -520,7 +526,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		return context.Canceled
 	}
 
-	notice, err := ex.addToolResultWithFallback(tc.ID, result.Content)
+	notice, err := ex.addToolResultWithFallback(ctx, tc.ID, result.Content)
 	if err != nil {
 		return err
 	}
@@ -541,7 +547,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 
 func (ex *executor) handleInterruptedToolCall(tc llm.ToolCall, partialOutput string) error {
 	content := interruptedToolResultContent(partialOutput)
-	notice, err := ex.addToolResultWithFallback(tc.ID, content)
+	notice, err := ex.addToolResultWithFallback(context.Background(), tc.ID, content)
 	if err != nil {
 		return err
 	}
@@ -659,15 +665,19 @@ func (ex *executor) persistSnapshot() error {
 	return ex.engine.recorder.PersistSnapshot()
 }
 
-func (ex *executor) addContextMessage(msg llm.Message) (*contextCompactionNotice, error) {
+func (ex *executor) addContextMessage(ctx context.Context, msg llm.Message) (*contextCompactionNotice, error) {
 	beforeUsage := ex.engine.ctxManager.TokenUsage()
 	beforeCompactCount := ex.engine.ctxManager.CompactCount()
-	if err := ex.engine.ctxManager.AddMessage(msg); err != nil {
+	if err := ex.engine.ctxManager.AddMessageWithContext(ctx, msg); err != nil {
 		return nil, err
 	}
 	afterCompactCount := ex.engine.ctxManager.CompactCount()
 	if afterCompactCount <= beforeCompactCount {
 		return nil, nil
+	}
+	if ex.usesResponsesChain() {
+		ex.responsesPreviousID = ""
+		ex.responsesFollowup = nil
 	}
 	afterUsage := ex.engine.ctxManager.TokenUsage()
 	return &contextCompactionNotice{
@@ -686,9 +696,9 @@ func (ex *executor) emitContextCompactionNotice(notice *contextCompactionNotice)
 	))
 }
 
-func (ex *executor) addToolResult(callID, content string) (*contextCompactionNotice, error) {
+func (ex *executor) addToolResult(ctx context.Context, callID, content string) (*contextCompactionNotice, error) {
 	msg := llm.NewToolMessage(callID, content)
-	notice, err := ex.addContextMessage(msg)
+	notice, err := ex.addContextMessage(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -708,11 +718,11 @@ func (ex *executor) addToolResult(callID, content string) (*contextCompactionNot
 	return notice, nil
 }
 
-func (ex *executor) addToolResultWithFallback(callID, content string) (*contextCompactionNotice, error) {
-	notice, err := ex.addToolResult(callID, content)
+func (ex *executor) addToolResultWithFallback(ctx context.Context, callID, content string) (*contextCompactionNotice, error) {
+	notice, err := ex.addToolResult(ctx, callID, content)
 	if err != nil {
 		fallback := fmt.Sprintf("tool result replaced due to context limit: %v", err)
-		fallbackNotice, fallbackErr := ex.addToolResult(callID, fallback)
+		fallbackNotice, fallbackErr := ex.addToolResult(ctx, callID, fallback)
 		if fallbackErr != nil {
 			return nil, fmt.Errorf("persist tool result fallback: %w (original error: %v)", fallbackErr, err)
 		}

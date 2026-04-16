@@ -1,0 +1,309 @@
+package context
+
+import (
+	stdctx "context"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mindspore-lab/mindspore-cli/integrations/llm"
+)
+
+type compactTestProvider struct {
+	response llm.CompletionResponse
+	err      error
+	calls    int
+	lastReq  *llm.CompletionRequest
+}
+
+func (p *compactTestProvider) Name() string { return "compact-test" }
+
+func (p *compactTestProvider) Complete(ctx stdctx.Context, req *llm.CompletionRequest) (*llm.CompletionResponse, error) {
+	p.calls++
+	p.lastReq = req
+	if p.err != nil {
+		return nil, p.err
+	}
+	resp := p.response
+	return &resp, nil
+}
+
+func (p *compactTestProvider) CompleteStream(ctx stdctx.Context, req *llm.CompletionRequest) (llm.StreamIterator, error) {
+	return nil, errors.New("streaming is not implemented")
+}
+
+func (p *compactTestProvider) SupportsTools() bool { return true }
+
+func (p *compactTestProvider) AvailableModels() []llm.ModelInfo {
+	return []llm.ModelInfo{{ID: "compact-test-model", Provider: p.Name()}}
+}
+
+func TestCompactUsesLLMSummaryAndTrajectoryReference(t *testing.T) {
+	t.Setenv(envCompactMode, compactModeLLM)
+	provider := &compactTestProvider{
+		response: llm.CompletionResponse{
+			Content: "<analysis>draft notes that should be stripped</analysis><summary>1. Primary Request and Intent:\n   preserve the important work.</summary>",
+		},
+	}
+	mgr := NewManager(ManagerConfig{
+		ContextWindow:       1000,
+		ReserveTokens:       100,
+		CompactionThreshold: 0.9,
+		CompactProvider:     provider,
+		TrajectoryPath:      "/tmp/mscli/trajectory.jsonl",
+	})
+
+	for i := 0; i < 3; i++ {
+		if err := mgr.AddMessage(llm.NewUserMessage(strings.Repeat("x", 800))); err != nil {
+			t.Fatalf("AddMessage #%d failed: %v", i+1, err)
+		}
+	}
+	before := mgr.TokenUsage().Current
+
+	if err := mgr.Compact(); err != nil {
+		t.Fatalf("Compact failed: %v", err)
+	}
+
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	if provider.lastReq == nil {
+		t.Fatal("provider request was not captured")
+	}
+	if len(provider.lastReq.Tools) != 0 {
+		t.Fatalf("compact request tools = %d, want 0", len(provider.lastReq.Tools))
+	}
+	if got := provider.lastReq.Messages[0].Content; got != compactSummarySystemPrompt {
+		t.Fatalf("compact system prompt = %q, want %q", got, compactSummarySystemPrompt)
+	}
+	if got := provider.lastReq.Messages[len(provider.lastReq.Messages)-1].Content; !strings.Contains(got, "Your <summary> section must include") {
+		t.Fatalf("compact prompt missing summary structure: %q", got)
+	}
+
+	msgs := mgr.GetNonSystemMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("messages after compact = %d, want 1", len(msgs))
+	}
+	content := msgs[0].Content
+	if strings.Contains(content, "draft notes") {
+		t.Fatalf("compact summary still contains analysis block: %q", content)
+	}
+	if !strings.Contains(content, "Summary:\n1. Primary Request and Intent:") {
+		t.Fatalf("compact summary content = %q, want formatted summary", content)
+	}
+	if !strings.Contains(content, "Reference: the full trajectory is available at: /tmp/mscli/trajectory.jsonl") {
+		t.Fatalf("compact summary content = %q, want trajectory reference", content)
+	}
+	if got := mgr.TokenUsage().Current; got >= before {
+		t.Fatalf("token usage after compact = %d, want less than before %d", got, before)
+	}
+}
+
+func TestAddMessageAutoCompactUsesLLMSummary(t *testing.T) {
+	t.Setenv(envCompactMode, compactModeLLM)
+	provider := &compactTestProvider{
+		response: llm.CompletionResponse{Content: "<summary>Current Work:\n   continue the active request.</summary>"},
+	}
+	var snapshotTrigger CompactTrigger
+	var snapshotMessages int
+	mgr := NewManager(ManagerConfig{
+		ContextWindow:       300,
+		ReserveTokens:       30,
+		CompactionThreshold: 0.5,
+		CompactProvider:     provider,
+		TrajectoryPath:      "/tmp/mscli/trajectory.jsonl",
+		PreCompactSnapshot: func(snapshot CompactSnapshot) error {
+			snapshotTrigger = snapshot.Trigger
+			snapshotMessages = len(snapshot.Messages)
+			return nil
+		},
+	})
+
+	if err := mgr.AddMessage(llm.NewUserMessage(strings.Repeat("first ", 80))); err != nil {
+		t.Fatalf("AddMessage first failed: %v", err)
+	}
+	if err := mgr.AddMessage(llm.NewAssistantMessage(strings.Repeat("second ", 80))); err != nil {
+		t.Fatalf("AddMessage second failed: %v", err)
+	}
+
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	if snapshotTrigger != CompactTriggerAuto {
+		t.Fatalf("pre-compact snapshot trigger = %q, want %q", snapshotTrigger, CompactTriggerAuto)
+	}
+	if snapshotMessages != 2 {
+		t.Fatalf("pre-compact snapshot messages = %d, want 2", snapshotMessages)
+	}
+	msgs := mgr.GetNonSystemMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("messages after auto compact = %d, want 1", len(msgs))
+	}
+	if !strings.Contains(msgs[0].Content, "continue the active request") {
+		t.Fatalf("auto compact summary = %q, want llm summary", msgs[0].Content)
+	}
+}
+
+type dumpingCompactProvider struct {
+	calls int
+}
+
+func (p *dumpingCompactProvider) Name() string { return "dumping-compact-test" }
+
+func (p *dumpingCompactProvider) Complete(ctx stdctx.Context, req *llm.CompletionRequest) (*llm.CompletionResponse, error) {
+	p.calls++
+	resp, err := llm.DoJSON(ctx, fakeCompactHTTPClient{}, http.MethodPost, "https://compact.example/v1/chat/completions", nil, req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		return nil, err
+	}
+	return &llm.CompletionResponse{Content: "<summary>debug compact response</summary>"}, nil
+}
+
+func (p *dumpingCompactProvider) CompleteStream(ctx stdctx.Context, req *llm.CompletionRequest) (llm.StreamIterator, error) {
+	return nil, errors.New("streaming is not implemented")
+}
+
+func (p *dumpingCompactProvider) SupportsTools() bool { return true }
+
+func (p *dumpingCompactProvider) AvailableModels() []llm.ModelInfo {
+	return []llm.ModelInfo{{ID: "dumping-compact-test-model", Provider: p.Name()}}
+}
+
+type fakeCompactHTTPClient struct{}
+
+func (fakeCompactHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"content":"ok"}`)),
+		Request:    req,
+	}, nil
+}
+
+func TestCompactLLMSummaryUsesDebugDumper(t *testing.T) {
+	t.Setenv(envCompactMode, compactModeLLM)
+	debugDir := t.TempDir()
+	provider := &dumpingCompactProvider{}
+	mgr := NewManager(ManagerConfig{
+		ContextWindow:       1000,
+		ReserveTokens:       100,
+		CompactionThreshold: 0.9,
+		CompactProvider:     provider,
+		DebugDumper:         llm.NewDebugDumper(debugDir),
+	})
+
+	for i := 0; i < 3; i++ {
+		if err := mgr.AddMessage(llm.NewUserMessage(strings.Repeat("x", 800))); err != nil {
+			t.Fatalf("AddMessage #%d failed: %v", i+1, err)
+		}
+	}
+	if err := mgr.Compact(); err != nil {
+		t.Fatalf("Compact failed: %v", err)
+	}
+
+	requests, err := filepath.Glob(filepath.Join(debugDir, "llm_*.request.http"))
+	if err != nil {
+		t.Fatalf("glob requests: %v", err)
+	}
+	responses, err := filepath.Glob(filepath.Join(debugDir, "llm_*.response.http"))
+	if err != nil {
+		t.Fatalf("glob responses: %v", err)
+	}
+	if len(requests) != 1 || len(responses) != 1 {
+		t.Fatalf("debug dumps requests=%d responses=%d, want 1 each", len(requests), len(responses))
+	}
+	requestDump, err := os.ReadFile(requests[0])
+	if err != nil {
+		t.Fatalf("read request dump: %v", err)
+	}
+	if !strings.Contains(string(requestDump), "Conversation to summarize") {
+		t.Fatalf("request dump missing compact prompt:\n%s", string(requestDump))
+	}
+	responseDump, err := os.ReadFile(responses[0])
+	if err != nil {
+		t.Fatalf("read response dump: %v", err)
+	}
+	if !strings.Contains(string(responseDump), `{"content":"ok"}`) {
+		t.Fatalf("response dump missing body:\n%s", string(responseDump))
+	}
+}
+
+func TestCompactFallsBackWhenLLMSummaryFails(t *testing.T) {
+	t.Setenv(envCompactMode, compactModeLLM)
+	provider := &compactTestProvider{err: errors.New("provider unavailable")}
+	mgr := NewManager(ManagerConfig{
+		ContextWindow:       1000,
+		ReserveTokens:       100,
+		CompactionThreshold: 0.9,
+		EnableSmartCompact:  false,
+		CompactProvider:     provider,
+	})
+
+	for i := 0; i < 3; i++ {
+		if err := mgr.AddMessage(llm.NewUserMessage(strings.Repeat("x", 500))); err != nil {
+			t.Fatalf("AddMessage #%d failed: %v", i+1, err)
+		}
+	}
+	before := mgr.TokenUsage().Current
+
+	if err := mgr.Compact(); err != nil {
+		t.Fatalf("Compact failed: %v", err)
+	}
+
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	if got := mgr.TokenUsage().Current; got > before/2 {
+		t.Fatalf("token usage after fallback compact = %d, want <= %d", got, before/2)
+	}
+	if got := len(mgr.GetNonSystemMessages()); got >= 3 {
+		t.Fatalf("message count after fallback compact = %d, want fewer than 3", got)
+	}
+}
+
+func TestCompactModePrioritySkipsLLMSummary(t *testing.T) {
+	t.Setenv(envCompactMode, compactModePriority)
+	provider := &compactTestProvider{
+		response: llm.CompletionResponse{Content: "<summary>should not be used</summary>"},
+	}
+	mgr := NewManager(ManagerConfig{
+		ContextWindow:       1000,
+		ReserveTokens:       100,
+		CompactionThreshold: 0.9,
+		EnableSmartCompact:  false,
+		CompactProvider:     provider,
+	})
+
+	for i := 0; i < 3; i++ {
+		if err := mgr.AddMessage(llm.NewUserMessage(strings.Repeat("x", 500))); err != nil {
+			t.Fatalf("AddMessage #%d failed: %v", i+1, err)
+		}
+	}
+	if err := mgr.Compact(); err != nil {
+		t.Fatalf("Compact failed: %v", err)
+	}
+
+	if provider.calls != 0 {
+		t.Fatalf("provider calls = %d, want 0", provider.calls)
+	}
+	if content := strings.Join(messageContents(mgr.GetNonSystemMessages()), "\n"); strings.Contains(content, "should not be used") {
+		t.Fatalf("priority compact used llm summary: %q", content)
+	}
+}
+
+func messageContents(messages []llm.Message) []string {
+	contents := make([]string, len(messages))
+	for i, msg := range messages {
+		contents[i] = msg.Content
+	}
+	return contents
+}

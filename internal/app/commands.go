@@ -459,8 +459,15 @@ func (a *Application) cmdCompact() {
 		return
 	}
 
+	compactCtx := context.Background()
+	cancel := func() {}
+	if a.Config != nil && a.Config.Model.TimeoutSec > 0 {
+		compactCtx, cancel = context.WithTimeout(compactCtx, time.Duration(a.Config.Model.TimeoutSec)*time.Second)
+	}
+	defer cancel()
+
 	before := a.ctxManager.TokenUsage()
-	if err := a.ctxManager.Compact(); err != nil {
+	if err := a.ctxManager.CompactWithContext(compactCtx); err != nil {
 		a.EventCh <- model.Event{
 			Type:     model.ToolError,
 			ToolName: "context",

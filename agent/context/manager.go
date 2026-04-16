@@ -1,6 +1,7 @@
 package context
 
 import (
+	stdctx "context"
 	"fmt"
 	"strings"
 	"sync"
@@ -20,6 +21,10 @@ type ManagerConfig struct {
 	EnableSmartCompact bool            // 启用智能压缩
 	CompactStrategy    CompactStrategy // 压缩策略
 	EnablePriority     bool            // 启用优先级系统
+	CompactProvider    llm.Provider    // LLM summarization provider
+	TrajectoryPath     string          // full trajectory reference for post-compact context
+	DebugDumper        *llm.DebugDumper
+	PreCompactSnapshot func(CompactSnapshot) error
 }
 
 // DefaultManagerConfig 返回默认配置
@@ -55,9 +60,13 @@ type Manager struct {
 	tokenizer *Tokenizer
 	compactor *Compactor
 	scorer    *PriorityScorer
+	provider  llm.Provider
+	dumper    *llm.DebugDumper
 
 	// 统计
-	stats Stats
+	stats              Stats
+	trajectoryPath     string
+	preCompactSnapshot func(CompactSnapshot) error
 }
 
 // TokenUsage represents token usage statistics.
@@ -107,6 +116,22 @@ type Stats struct {
 	TotalTokensUsed int
 }
 
+// CompactTrigger identifies why compaction is running.
+type CompactTrigger string
+
+const (
+	CompactTriggerAuto   CompactTrigger = "auto"
+	CompactTriggerManual CompactTrigger = "manual"
+)
+
+// CompactSnapshot is a copy of the context just before compaction.
+type CompactSnapshot struct {
+	Trigger      CompactTrigger
+	SystemPrompt string
+	Messages     []llm.Message
+	Usage        TokenUsageDetails
+}
+
 // NewManager creates a new context manager.
 func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.ContextWindow == 0 {
@@ -130,11 +155,15 @@ func NewManager(cfg ManagerConfig) *Manager {
 		tokenizer: NewTokenizer(),
 		compactor: compactor,
 		scorer:    NewPriorityScorer(),
+		provider:  cfg.CompactProvider,
+		dumper:    cfg.DebugDumper,
 		usage: TokenUsage{
 			ContextWindow: cfg.ContextWindow,
 			Reserved:      cfg.ReserveTokens,
 			Available:     cfg.ContextWindow - cfg.ReserveTokens,
 		},
+		trajectoryPath:     strings.TrimSpace(cfg.TrajectoryPath),
+		preCompactSnapshot: cfg.PreCompactSnapshot,
 	}
 
 	return m
@@ -166,8 +195,16 @@ func (m *Manager) GetSystemPrompt() *llm.Message {
 
 // AddMessage adds a message to the context.
 func (m *Manager) AddMessage(msg llm.Message) error {
+	return m.AddMessageWithContext(stdctx.Background(), msg)
+}
+
+// AddMessageWithContext adds a message to the context and uses ctx for LLM-based compaction.
+func (m *Manager) AddMessageWithContext(ctx stdctx.Context, msg llm.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if ctx == nil {
+		ctx = stdctx.Background()
+	}
 
 	// 估算新消息的 Token
 	msgTokens := m.tokenizer.EstimateMessage(msg)
@@ -181,7 +218,7 @@ func (m *Manager) AddMessage(msg llm.Message) error {
 
 	// 后置压缩：基于最新上下文做决策，避免仅靠预估触发
 	if m.shouldCompactLocked(0) {
-		if err := m.compactLocked(); err != nil {
+		if err := m.compactLocked(ctx); err != nil {
 			return fmt.Errorf("compact context: %w", err)
 		}
 	}
@@ -255,14 +292,22 @@ func (m *Manager) Clear() {
 
 // Compact manually triggers context compaction.
 func (m *Manager) Compact() error {
+	return m.CompactWithContext(stdctx.Background())
+}
+
+// CompactWithContext manually triggers context compaction and uses ctx for LLM-based summarization.
+func (m *Manager) CompactWithContext(ctx stdctx.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if ctx == nil {
+		ctx = stdctx.Background()
+	}
 
 	currentTokens := m.currentTokensLocked()
 	if currentTokens == 0 {
 		return nil
 	}
-	return m.compactToTargetLocked(currentTokens / 2)
+	return m.compactToTargetLocked(ctx, currentTokens/2, CompactTriggerManual)
 }
 
 // TokenUsage returns current token usage.
@@ -402,6 +447,10 @@ func (m *Manager) TokenUsageDetails() TokenUsageDetails {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	return m.tokenUsageDetailsLocked()
+}
+
+func (m *Manager) tokenUsageDetailsLocked() TokenUsageDetails {
 	localEstimatedTotal := m.totalTokensLocked()
 	details := TokenUsageDetails{
 		TokenUsage:          m.usage,
@@ -487,15 +536,15 @@ func (m *Manager) shouldCompactLocked(additionalTokens int) bool {
 }
 
 // compactLocked compacts the context (must hold lock).
-func (m *Manager) compactLocked() error {
+func (m *Manager) compactLocked(ctx stdctx.Context) error {
 	currentTokens := m.currentTokensLocked()
 	if currentTokens == 0 || !m.shouldCompactLocked(0) {
 		return nil
 	}
-	return m.compactToTargetLocked(m.compactionTargetTokensLocked())
+	return m.compactToTargetLocked(ctx, m.compactionTargetTokensLocked(), CompactTriggerAuto)
 }
 
-func (m *Manager) compactToTargetLocked(targetTokens int) error {
+func (m *Manager) compactToTargetLocked(ctx stdctx.Context, targetTokens int, trigger CompactTrigger) error {
 	currentTokens := m.currentTokensLocked()
 	if currentTokens == 0 {
 		return nil
@@ -506,14 +555,24 @@ func (m *Manager) compactToTargetLocked(targetTokens int) error {
 	if currentTokens <= targetTokens {
 		return nil
 	}
+	if err := m.dumpPreCompactSnapshotLocked(trigger); err != nil {
+		return fmt.Errorf("dump pre-compact snapshot: %w", err)
+	}
 
 	compacted := m.messages
-	if m.config.EnableSmartCompact && m.compactor != nil {
-		next, result := m.compactor.Compact(m.messages, m.system, targetTokens)
+	var result CompactResult
+	if m.shouldUseLLMCompactLocked() {
+		next, llmResult, err := m.compactWithLLMLocked(ctx, targetTokens)
+		if err == nil {
+			compacted = next
+			result = llmResult
+		}
+	}
+	if len(compacted) == len(m.messages) && result.Strategy != CompactStrategyLLM {
+		forcePriority := compactModeFromEnv() == compactModePriority
+		next, fallbackResult := m.fallbackCompactToTargetLocked(targetTokens, forcePriority)
 		compacted = next
-		_ = result // 可以在日志中记录
-	} else {
-		compacted = keepRecentMessagesWithinTotalBudget(m.messages, m.system, targetTokens, m.tokenizer)
+		result = fallbackResult
 	}
 
 	compacted = keepRecentMessagesWithinTotalBudget(compacted, m.system, targetTokens, m.tokenizer)
@@ -534,6 +593,56 @@ func (m *Manager) compactToTargetLocked(targetTokens int) error {
 	m.stats.LastCompactAt = &now
 	m.recalculateUsage()
 	return nil
+}
+
+func (m *Manager) dumpPreCompactSnapshotLocked(trigger CompactTrigger) error {
+	if m.preCompactSnapshot == nil {
+		return nil
+	}
+
+	systemPrompt := ""
+	if m.system != nil {
+		systemPrompt = m.system.Content
+	}
+	messages := make([]llm.Message, len(m.messages))
+	copy(messages, m.messages)
+
+	return m.preCompactSnapshot(CompactSnapshot{
+		Trigger:      trigger,
+		SystemPrompt: systemPrompt,
+		Messages:     messages,
+		Usage:        m.tokenUsageDetailsLocked(),
+	})
+}
+
+func (m *Manager) shouldUseLLMCompactLocked() bool {
+	if m.provider == nil {
+		return false
+	}
+	switch compactModeFromEnv() {
+	case compactModeLegacy, compactModePriority:
+		return false
+	default:
+		return true
+	}
+}
+
+func (m *Manager) fallbackCompactToTargetLocked(targetTokens int, forcePriority bool) ([]llm.Message, CompactResult) {
+	if m.config.EnableSmartCompact && m.compactor != nil {
+		if forcePriority {
+			compactor := NewCompactor(CompactorConfig{Strategy: CompactStrategyPriority})
+			return compactor.Compact(m.messages, m.system, targetTokens)
+		}
+		return m.compactor.Compact(m.messages, m.system, targetTokens)
+	}
+
+	compacted := keepRecentMessagesWithinTotalBudget(m.messages, m.system, targetTokens, m.tokenizer)
+	return compacted, CompactResult{
+		Kept:     len(compacted),
+		Removed:  len(m.messages) - len(compacted),
+		Strategy: CompactStrategySimple,
+		Summary:  "kept recent messages within context budget",
+	}
 }
 
 func (m *Manager) compactionThresholdPercentLocked() float64 {
@@ -632,6 +741,42 @@ func (m *Manager) SetCompactStrategy(s CompactStrategy) {
 	if m.compactor != nil {
 		m.compactor.SetStrategy(s)
 	}
+}
+
+// SetCompactProvider updates the provider used for LLM-based compaction.
+func (m *Manager) SetCompactProvider(provider llm.Provider) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.provider = provider
+	m.config.CompactProvider = provider
+}
+
+// SetDebugDumper updates the dumper used for LLM compact request/response dumps.
+func (m *Manager) SetDebugDumper(dumper *llm.DebugDumper) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.dumper = dumper
+	m.config.DebugDumper = dumper
+}
+
+// SetPreCompactSnapshotHook updates the hook called before each actual compaction.
+func (m *Manager) SetPreCompactSnapshotHook(hook func(CompactSnapshot) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.preCompactSnapshot = hook
+	m.config.PreCompactSnapshot = hook
+}
+
+// SetTrajectoryPath updates the full trajectory reference included after compaction.
+func (m *Manager) SetTrajectoryPath(path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.trajectoryPath = strings.TrimSpace(path)
+	m.config.TrajectoryPath = m.trajectoryPath
 }
 
 // GetMessagePriority returns the priority of a message.

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -234,6 +235,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	managerCfg.ContextWindow = config.Context.Window
 	managerCfg.ReserveTokens = config.Context.ReserveTokens
 	managerCfg.CompactionThreshold = config.Context.CompactionThreshold
+	managerCfg.CompactProvider = provider
 	ctxManager := agentctx.NewManager(managerCfg)
 
 	// Build system prompt: base + skill summaries.
@@ -482,8 +484,69 @@ func (a *Application) refreshEngineSessionBindings() {
 	if a == nil || a.Engine == nil {
 		return
 	}
+	if a.ctxManager != nil {
+		a.ctxManager.SetCompactProvider(a.provider)
+		a.ctxManager.SetDebugDumper(a.llmDebugDumper)
+		if a.llmDebugDumper != nil {
+			a.ctxManager.SetPreCompactSnapshotHook(a.dumpPreCompactSnapshot)
+		} else {
+			a.ctxManager.SetPreCompactSnapshotHook(nil)
+		}
+		trajectoryPath := ""
+		if a.session != nil {
+			trajectoryPath = a.session.Path()
+		}
+		a.ctxManager.SetTrajectoryPath(trajectoryPath)
+	}
 	a.Engine.SetLLMDebugDumper(a.llmDebugDumper)
 	a.Engine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session, a.ctxManager, a.noteLiveLLMActivity))
+}
+
+func (a *Application) dumpPreCompactSnapshot(snapshot agentctx.CompactSnapshot) error {
+	if a == nil || a.llmDebugDumper == nil || a.session == nil {
+		return nil
+	}
+
+	sessionDir := filepath.Dir(a.session.Path())
+	if strings.TrimSpace(sessionDir) == "" || sessionDir == "." {
+		return nil
+	}
+
+	meta := a.session.Meta()
+	workDir := strings.TrimSpace(meta.WorkDir)
+	if workDir == "" {
+		workDir = a.WorkDir
+	}
+
+	messages := make([]llm.Message, len(snapshot.Messages))
+	copy(messages, snapshot.Messages)
+	payload := session.Snapshot{
+		SessionID:     a.session.ID(),
+		WorkDir:       workDir,
+		SystemPrompt:  snapshot.SystemPrompt,
+		UpdatedAt:     time.Now(),
+		Messages:      messages,
+		ProviderUsage: providerUsageSnapshotFromDetails(snapshot.Usage),
+	}
+
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal pre-compact snapshot: %w", err)
+	}
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		return fmt.Errorf("create session directory: %w", err)
+	}
+
+	trigger := strings.TrimSpace(string(snapshot.Trigger))
+	if trigger == "" {
+		trigger = "compact"
+	}
+	stamp := time.Now().UTC().Format("20060102-150405-000000000")
+	path := filepath.Join(sessionDir, fmt.Sprintf("snapshot.compact-pre-%s-%s.json", trigger, stamp))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write pre-compact snapshot: %w", err)
+	}
+	return nil
 }
 
 func (a *Application) rotateSession() error {
@@ -569,6 +632,7 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 		if err := a.ctxManager.SetContextWindowLimits(a.Config.Context.Window, a.Config.Context.ReserveTokens); err != nil {
 			return fmt.Errorf("update context limits: %w", err)
 		}
+		a.ctxManager.SetCompactProvider(provider)
 	}
 	newEngine.SetContextManager(a.ctxManager)
 	newEngine.SetPermissionService(a.permService)
