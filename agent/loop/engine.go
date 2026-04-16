@@ -39,12 +39,13 @@ type Engine struct {
 
 // TrajectoryRecorder records runtime conversation events for persistence.
 type TrajectoryRecorder struct {
-	RecordUserInput     func(string) error
-	RecordAssistant     func(string) error
-	RecordToolCall      func(llm.ToolCall) error
-	RecordToolResult    func(llm.ToolCall, string) error
-	RecordSkillActivate func(string) error
-	PersistSnapshot     func() error
+	RecordUserInput         func(string) error
+	RecordAssistant         func(string) error
+	RecordToolCall          func(llm.ToolCall) error
+	RecordToolResult        func(llm.ToolCall, string) error
+	RecordSkillActivate     func(string) error
+	RecordContextCompaction func(trigger string, beforeTokens, afterTokens int, message string) error
+	PersistSnapshot         func() error
 }
 
 // NewEngine creates a new engine.
@@ -180,7 +181,10 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 		ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist snapshot error: %v", err)))
 		return ex.events, err
 	}
-	ex.emitContextCompactionNotice(notice)
+	if err := ex.emitContextCompactionNotice(notice); err != nil {
+		ex.addEvent(NewEvent(EventTaskFailed, err.Error()))
+		return ex.events, err
+	}
 	ex.addEvent(NewEvent(EventTaskStarted, fmt.Sprintf("Task: %s", ex.task.Description)))
 
 	completed := false
@@ -402,7 +406,9 @@ func (ex *executor) handleResponse(ctx context.Context, resp *llm.CompletionResp
 	if err := ex.persistSnapshot(); err != nil {
 		return false, err
 	}
-	ex.emitContextCompactionNotice(notice)
+	if err := ex.emitContextCompactionNotice(notice); err != nil {
+		return false, err
+	}
 
 	if ex.usesResponsesChain() && strings.TrimSpace(resp.ID) != "" {
 		ex.responsesPreviousID = strings.TrimSpace(resp.ID)
@@ -438,7 +444,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		if err := ex.persistSnapshot(); err != nil {
 			return err
 		}
-		ex.emitContextCompactionNotice(notice)
+		if err := ex.emitContextCompactionNotice(notice); err != nil {
+			return err
+		}
 		ex.addEvent(NewEvent(EventToolError, errMsg))
 		return nil
 	}
@@ -460,7 +468,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		if err := ex.persistSnapshot(); err != nil {
 			return err
 		}
-		ex.emitContextCompactionNotice(notice)
+		if err := ex.emitContextCompactionNotice(notice); err != nil {
+			return err
+		}
 		ex.addEvent(NewEvent(EventToolError, errMsg))
 		return nil
 	}
@@ -495,7 +505,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		if err := ex.persistSnapshot(); err != nil {
 			return err
 		}
-		ex.emitContextCompactionNotice(notice)
+		if err := ex.emitContextCompactionNotice(notice); err != nil {
+			return err
+		}
 		ex.addEvent(NewEvent(EventToolError, errMsg))
 		return nil
 	}
@@ -515,7 +527,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		if err := ex.persistSnapshot(); err != nil {
 			return err
 		}
-		ex.emitContextCompactionNotice(notice)
+		if err := ex.emitContextCompactionNotice(notice); err != nil {
+			return err
+		}
 		ex.addEvent(NewEvent(EventToolError, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg)))
 		return nil
 	}
@@ -540,7 +554,9 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if err := ex.persistSnapshot(); err != nil {
 		return err
 	}
-	ex.emitContextCompactionNotice(notice)
+	if err := ex.emitContextCompactionNotice(notice); err != nil {
+		return err
+	}
 	ex.addToolEvent(toolName, tc.ID, result)
 	return nil
 }
@@ -554,7 +570,9 @@ func (ex *executor) handleInterruptedToolCall(tc llm.ToolCall, partialOutput str
 	if err := ex.persistSnapshot(); err != nil {
 		return err
 	}
-	ex.emitContextCompactionNotice(notice)
+	if err := ex.emitContextCompactionNotice(notice); err != nil {
+		return err
+	}
 
 	ev := NewEvent(EventToolInterrupted, strings.TrimSpace(partialOutput))
 	ev.ToolName = tc.Function.Name
@@ -686,14 +704,18 @@ func (ex *executor) addContextMessage(ctx context.Context, msg llm.Message) (*co
 	}, nil
 }
 
-func (ex *executor) emitContextCompactionNotice(notice *contextCompactionNotice) {
+func (ex *executor) emitContextCompactionNotice(notice *contextCompactionNotice) error {
 	if notice == nil {
-		return
+		return nil
 	}
-	ex.addEvent(NewEvent(
-		EventContextCompacted,
-		fmt.Sprintf("Context compacted automatically: %d -> %d tokens.", notice.BeforeTokens, notice.AfterTokens),
-	))
+	message := fmt.Sprintf("Context compacted automatically: %d -> %d tokens.", notice.BeforeTokens, notice.AfterTokens)
+	if ex.engine.recorder != nil && ex.engine.recorder.RecordContextCompaction != nil {
+		if err := ex.engine.recorder.RecordContextCompaction("auto", notice.BeforeTokens, notice.AfterTokens, message); err != nil {
+			return fmt.Errorf("persist context compaction event: %w", err)
+		}
+	}
+	ex.addEvent(NewEvent(EventContextCompacted, message))
+	return nil
 }
 
 func (ex *executor) addToolResult(ctx context.Context, callID, content string) (*contextCompactionNotice, error) {

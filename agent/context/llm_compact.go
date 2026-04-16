@@ -2,7 +2,6 @@ package context
 
 import (
 	stdctx "context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -94,11 +93,9 @@ func (m *Manager) compactWithLLMLocked(ctx stdctx.Context, targetTokens int) ([]
 	}
 
 	maxTokens := compactSummaryMaxTokens(targetTokens)
+	reqMessages := compactSummaryRequestMessages(m.messages)
 	req := &llm.CompletionRequest{
-		Messages: []llm.Message{
-			llm.NewSystemMessage(compactSummarySystemPrompt),
-			llm.NewUserMessage(compactSummaryPrompt + "\n\nConversation to summarize:\n\n" + renderConversationForCompact(m.messages)),
-		},
+		Messages:  reqMessages,
 		MaxTokens: &maxTokens,
 	}
 
@@ -142,27 +139,12 @@ func compactSummaryMaxTokens(targetTokens int) int {
 	return maxTokens
 }
 
-func renderConversationForCompact(messages []llm.Message) string {
-	var b strings.Builder
-	for i, msg := range messages {
-		fmt.Fprintf(&b, "## Message %d\nrole: %s\n", i+1, strings.TrimSpace(msg.Role))
-		if msg.ToolCallID != "" {
-			fmt.Fprintf(&b, "tool_call_id: %s\n", msg.ToolCallID)
-		}
-		if len(msg.ToolCalls) > 0 {
-			if data, err := json.Marshal(msg.ToolCalls); err == nil {
-				fmt.Fprintf(&b, "tool_calls: %s\n", string(data))
-			}
-		}
-		content := strings.TrimSpace(msg.Content)
-		if content == "" {
-			content = "(empty)"
-		}
-		b.WriteString("content:\n")
-		b.WriteString(content)
-		b.WriteString("\n\n")
-	}
-	return b.String()
+func compactSummaryRequestMessages(messages []llm.Message) []llm.Message {
+	reqMessages := make([]llm.Message, 0, len(messages)+2)
+	reqMessages = append(reqMessages, llm.NewSystemMessage(compactSummarySystemPrompt))
+	reqMessages = append(reqMessages, messages...)
+	reqMessages = append(reqMessages, llm.NewUserMessage(compactSummaryPrompt))
+	return reqMessages
 }
 
 func formatCompactSummary(summary string) string {

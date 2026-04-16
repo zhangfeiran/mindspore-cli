@@ -711,6 +711,15 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, noteLiveLLM
 			}
 			return s.AppendSkillActivation(skillName)
 		},
+		RecordContextCompaction: func(trigger string, beforeTokens, afterTokens int, message string) error {
+			if s == nil {
+				return nil
+			}
+			if err := ensureSessionActive(); err != nil {
+				return err
+			}
+			return s.AppendContextCompaction(trigger, beforeTokens, afterTokens, message)
+		},
 		PersistSnapshot: func() error {
 			if s == nil || cm == nil {
 				return nil

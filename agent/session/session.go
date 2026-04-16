@@ -25,6 +25,7 @@ const (
 	recordTypeToolCall   = "tool_call"
 	recordTypeToolResult = "tool_result"
 	recordTypeSkill      = "skill_activation"
+	recordTypeCompact    = "context_compact"
 	formatVersion        = 1
 	defaultSessionSubdir = ".mscli/sessions"
 	replayWaitCap        = 5 * time.Second
@@ -44,13 +45,16 @@ type Meta struct {
 
 // MessageRecord is one persisted conversation event.
 type MessageRecord struct {
-	Type       string          `json:"type"`
-	Timestamp  time.Time       `json:"timestamp"`
-	Content    string          `json:"content,omitempty"`
-	ToolName   string          `json:"tool_name,omitempty"`
-	Arguments  json.RawMessage `json:"arguments,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	SkillName  string          `json:"skill_name,omitempty"`
+	Type         string          `json:"type"`
+	Timestamp    time.Time       `json:"timestamp"`
+	Content      string          `json:"content,omitempty"`
+	ToolName     string          `json:"tool_name,omitempty"`
+	Arguments    json.RawMessage `json:"arguments,omitempty"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	SkillName    string          `json:"skill_name,omitempty"`
+	Trigger      string          `json:"trigger,omitempty"`
+	BeforeTokens int             `json:"before_tokens,omitempty"`
+	AfterTokens  int             `json:"after_tokens,omitempty"`
 }
 
 // Snapshot stores the latest restorable context state.
@@ -409,6 +413,37 @@ func (s *Session) AppendSkillActivation(skillName string) error {
 		Type:      recordTypeSkill,
 		Timestamp: time.Now(),
 		SkillName: strings.TrimSpace(skillName),
+	}
+	s.records = append(s.records, record)
+	s.meta.UpdatedAt = record.Timestamp
+	if !s.persisted {
+		return nil
+	}
+	return s.writeRecordLocked(record)
+}
+
+// AppendContextCompaction appends one context compaction notice and syncs it immediately.
+func (s *Session) AppendContextCompaction(trigger string, beforeTokens, afterTokens int, content string) error {
+	if s == nil {
+		return fmt.Errorf("session is nil")
+	}
+
+	trigger = strings.TrimSpace(trigger)
+	content = strings.TrimSpace(content)
+	if content == "" {
+		content = contextCompactionMessage(trigger, beforeTokens, afterTokens)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record := MessageRecord{
+		Type:         recordTypeCompact,
+		Timestamp:    time.Now(),
+		Content:      content,
+		Trigger:      trigger,
+		BeforeTokens: beforeTokens,
+		AfterTokens:  afterTokens,
 	}
 	s.records = append(s.records, record)
 	s.meta.UpdatedAt = record.Timestamp
@@ -925,7 +960,7 @@ func loadFromPath(path string, appendOnly bool) (*Session, error) {
 				_ = file.Close()
 				return nil, fmt.Errorf("decode session meta: %w", err)
 			}
-		case recordTypeUser, recordTypeAssistant, recordTypeToolCall, recordTypeToolResult, recordTypeSkill:
+		case recordTypeUser, recordTypeAssistant, recordTypeToolCall, recordTypeToolResult, recordTypeSkill, recordTypeCompact:
 			var record MessageRecord
 			if err := json.Unmarshal(data, &record); err != nil {
 				_ = file.Close()
@@ -1315,6 +1350,28 @@ func replaySkillEvent(skillName, toolCallID string) model.Event {
 	}
 }
 
+func replayContextCompactionEvent(record MessageRecord) model.Event {
+	meta := map[string]any{}
+	if trigger := strings.TrimSpace(record.Trigger); trigger != "" {
+		meta["trigger"] = trigger
+	}
+	if record.BeforeTokens > 0 {
+		meta["before_tokens"] = record.BeforeTokens
+	}
+	if record.AfterTokens > 0 {
+		meta["after_tokens"] = record.AfterTokens
+	}
+	if len(meta) == 0 {
+		meta = nil
+	}
+	return model.Event{
+		Type:    model.ContextNotice,
+		Message: record.Content,
+		Meta:    meta,
+		CtxUsed: record.AfterTokens,
+	}
+}
+
 func replayEvent(record MessageRecord) (model.Event, bool) {
 	switch record.Type {
 	case recordTypeUser:
@@ -1330,8 +1387,19 @@ func replayEvent(record MessageRecord) (model.Event, bool) {
 		return replayToolResultEvent(record), true
 	case recordTypeSkill:
 		return replaySkillEvent(record.SkillName, record.ToolCallID), true
+	case recordTypeCompact:
+		return replayContextCompactionEvent(record), true
 	default:
 		return model.Event{}, false
+	}
+}
+
+func contextCompactionMessage(trigger string, beforeTokens, afterTokens int) string {
+	switch strings.TrimSpace(trigger) {
+	case "auto":
+		return fmt.Sprintf("Context compacted automatically: %d -> %d tokens.", beforeTokens, afterTokens)
+	default:
+		return fmt.Sprintf("Context compacted: %d -> %d tokens.", beforeTokens, afterTokens)
 	}
 }
 

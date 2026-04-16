@@ -147,6 +147,57 @@ func TestWorkDirKeySanitizesWindowsInvalidFilenameChars(t *testing.T) {
 	}
 }
 
+func TestContextCompactionRecordReplaysAsContextNotice(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	workDir := t.TempDir()
+	s, err := Create(workDir, "system prompt")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := s.AppendUserInput("hello"); err != nil {
+		t.Fatalf("append user input: %v", err)
+	}
+	const compactMessage = "Context compacted automatically: 120 -> 60 tokens."
+	if err := s.AppendContextCompaction("auto", 120, 60, compactMessage); err != nil {
+		t.Fatalf("append context compaction: %v", err)
+	}
+	if err := s.AppendAssistant("done"); err != nil {
+		t.Fatalf("append assistant: %v", err)
+	}
+	if err := s.Activate(); err != nil {
+		t.Fatalf("activate session: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+
+	loaded, err := LoadByID(workDir, s.ID())
+	if err != nil {
+		t.Fatalf("load activated session: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = loaded.Close()
+	})
+
+	replay := loaded.ReplayEvents()
+	if len(replay) != 3 {
+		t.Fatalf("replay event count = %d, want 3", len(replay))
+	}
+	if got, want := replay[1].Type, model.ContextNotice; got != want {
+		t.Fatalf("compact replay type = %q, want %q", got, want)
+	}
+	if got := replay[1].Message; got != compactMessage {
+		t.Fatalf("compact replay message = %q, want %q", got, compactMessage)
+	}
+	if got := replay[1].CtxUsed; got != 60 {
+		t.Fatalf("compact replay CtxUsed = %d, want 60", got)
+	}
+	if got := replay[1].Meta["trigger"]; got != "auto" {
+		t.Fatalf("compact replay trigger meta = %#v, want auto", got)
+	}
+}
+
 func jsonEqual(t *testing.T, got, want json.RawMessage) bool {
 	t.Helper()
 

@@ -485,10 +485,23 @@ func (a *Application) cmdCompact() {
 	if after.Current >= before.Current {
 		message = "Context compaction had nothing to remove."
 	}
+	if err := a.recordContextCompaction("manual", before.Current, after.Current, message); err != nil {
+		a.emitToolError("session", "Failed to record context compaction: %v", err)
+	}
 	a.EventCh <- model.Event{
 		Type:    model.AgentReply,
 		Message: message,
 	}
+}
+
+func (a *Application) recordContextCompaction(trigger string, beforeTokens, afterTokens int, message string) error {
+	if a == nil || a.session == nil {
+		return nil
+	}
+	if err := a.noteLiveLLMActivity(); err != nil {
+		return err
+	}
+	return a.session.AppendContextCompaction(trigger, beforeTokens, afterTokens, message)
 }
 
 func (a *Application) cmdCtx() {

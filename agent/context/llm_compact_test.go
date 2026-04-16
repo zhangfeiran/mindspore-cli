@@ -77,11 +77,27 @@ func TestCompactUsesLLMSummaryAndTrajectoryReference(t *testing.T) {
 	if len(provider.lastReq.Tools) != 0 {
 		t.Fatalf("compact request tools = %d, want 0", len(provider.lastReq.Tools))
 	}
+	if got, want := len(provider.lastReq.Messages), 5; got != want {
+		t.Fatalf("compact request messages = %d, want %d", got, want)
+	}
 	if got := provider.lastReq.Messages[0].Content; got != compactSummarySystemPrompt {
 		t.Fatalf("compact system prompt = %q, want %q", got, compactSummarySystemPrompt)
 	}
-	if got := provider.lastReq.Messages[len(provider.lastReq.Messages)-1].Content; !strings.Contains(got, "Your <summary> section must include") {
+	if got := provider.lastReq.Messages[1].Role; got != "user" {
+		t.Fatalf("compact request first history role = %q, want user", got)
+	}
+	if got := provider.lastReq.Messages[1].Content; !strings.Contains(got, strings.Repeat("x", 800)) {
+		t.Fatalf("compact request first history content was not preserved")
+	}
+	lastPrompt := provider.lastReq.Messages[len(provider.lastReq.Messages)-1]
+	if got := lastPrompt.Role; got != "user" {
+		t.Fatalf("compact request final prompt role = %q, want user", got)
+	}
+	if got := lastPrompt.Content; !strings.Contains(got, "Your <summary> section must include") {
 		t.Fatalf("compact prompt missing summary structure: %q", got)
+	}
+	if strings.Contains(lastPrompt.Content, "Conversation to summarize") {
+		t.Fatalf("compact prompt should not embed rendered conversation: %q", lastPrompt.Content)
 	}
 
 	msgs := mgr.GetNonSystemMessages()
@@ -225,7 +241,7 @@ func TestCompactLLMSummaryUsesDebugDumper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read request dump: %v", err)
 	}
-	if !strings.Contains(string(requestDump), "Conversation to summarize") {
+	if !strings.Contains(string(requestDump), "Primary Request and Intent") {
 		t.Fatalf("request dump missing compact prompt:\n%s", string(requestDump))
 	}
 	responseDump, err := os.ReadFile(responses[0])

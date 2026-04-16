@@ -103,4 +103,22 @@ func TestCmdCompactDebugDumpsPreCompactSnapshot(t *testing.T) {
 	if !strings.Contains(text, "before compact") {
 		t.Fatalf("pre-compact snapshot missing original messages:\n%s", text)
 	}
+
+	loaded, err := session.LoadReplayPath(runtimeSession.Path())
+	if err != nil {
+		t.Fatalf("load compact trajectory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = loaded.Close()
+	})
+	replay := loaded.ReplayEvents()
+	if len(replay) != 1 {
+		t.Fatalf("replay event count = %d, want 1", len(replay))
+	}
+	if got := replay[0].Type; got != model.ContextNotice {
+		t.Fatalf("compact replay event type = %q, want %q", got, model.ContextNotice)
+	}
+	if !strings.Contains(replay[0].Message, "Context compacted:") {
+		t.Fatalf("compact replay message = %q, want compaction summary", replay[0].Message)
+	}
 }
