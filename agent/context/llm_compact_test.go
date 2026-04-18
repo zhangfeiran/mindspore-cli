@@ -2,6 +2,7 @@ package context
 
 import (
 	stdctx "context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -167,6 +168,100 @@ func TestAddMessageAutoCompactUsesLLMSummary(t *testing.T) {
 	}
 	if !strings.Contains(msgs[0].Content, "continue the active request") {
 		t.Fatalf("auto compact summary = %q, want llm summary", msgs[0].Content)
+	}
+}
+
+func TestAddMessageAutoCompactReinjectsActivatedSkillAfterLLMSummary(t *testing.T) {
+	t.Setenv(envCompactMode, compactModeLLM)
+	provider := &compactTestProvider{
+		response: llm.CompletionResponse{Content: "<summary>Current Work:\n   continue with the loaded skill.</summary>"},
+	}
+	mgr := NewManager(ManagerConfig{
+		ContextWindow:       600,
+		ReserveTokens:       60,
+		CompactionThreshold: 0.8,
+		CompactProvider:     provider,
+	})
+
+	toolCallID := "call_load_demo"
+	skillCall := loadSkillToolCallMessage(t, toolCallID, "demo-skill")
+	skillCall.Content = "assistant text before load_skill should not be re-injected"
+	skillContent := "demo skill instructions\n" + strings.Repeat("follow the workflow. ", 20)
+	if err := mgr.AddMessage(llm.NewUserMessage(strings.Repeat("prior context ", 60))); err != nil {
+		t.Fatalf("AddMessage prior context failed: %v", err)
+	}
+	if err := mgr.AddMessage(skillCall); err != nil {
+		t.Fatalf("AddMessage skill call failed: %v", err)
+	}
+	if err := mgr.AddMessage(llm.NewToolMessage(toolCallID, skillContent)); err != nil {
+		t.Fatalf("AddMessage skill result failed: %v", err)
+	}
+	if err := mgr.AddMessage(llm.NewAssistantMessage(strings.Repeat("assistant context ", 60))); err != nil {
+		t.Fatalf("AddMessage triggering assistant failed: %v", err)
+	}
+
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	msgs := mgr.GetNonSystemMessages()
+	if got, want := len(msgs), 2; got != want {
+		t.Fatalf("messages after auto compact = %d, want %d: %#v", got, want, msgs)
+	}
+	if !strings.Contains(msgs[0].Content, "continue with the loaded skill") {
+		t.Fatalf("first compacted message = %q, want llm summary", msgs[0].Content)
+	}
+	if got := msgs[1].Role; got != "user" {
+		t.Fatalf("re-injected skill message role = %q, want user", got)
+	}
+	if len(msgs[1].ToolCalls) != 0 || msgs[1].ToolCallID != "" {
+		t.Fatalf("re-injected skill message should not contain tool call state: %#v", msgs[1])
+	}
+	if !strings.Contains(msgs[1].Content, `[Invoked Skill: demo-skill]`) {
+		t.Fatalf("re-injected skill message missing direct marker: %q", msgs[1].Content)
+	}
+	if !strings.Contains(msgs[1].Content, strings.TrimSpace(skillContent)) {
+		t.Fatalf("re-injected skill message missing original skill content: %q", msgs[1].Content)
+	}
+	if strings.Contains(msgs[1].Content, skillCall.Content) {
+		t.Fatalf("re-injected skill message leaked old assistant content: %q", msgs[1].Content)
+	}
+}
+
+func TestAddMessageAutoCompactPreservesDirectSkillInjectionAfterLLMSummary(t *testing.T) {
+	t.Setenv(envCompactMode, compactModeLLM)
+	provider := &compactTestProvider{
+		response: llm.CompletionResponse{Content: "<summary>Current Work:\n   continue after the next compact.</summary>"},
+	}
+	mgr := NewManager(ManagerConfig{
+		ContextWindow:       900,
+		ReserveTokens:       90,
+		CompactionThreshold: 0.5,
+		CompactProvider:     provider,
+	})
+
+	skillMsg := invokedSkillMessage("demo-skill", "direct skill instructions\n"+strings.Repeat("keep using this skill. ", 20))
+	if err := mgr.AddMessage(llm.NewUserMessage(strings.Repeat("old context ", 60))); err != nil {
+		t.Fatalf("AddMessage old context failed: %v", err)
+	}
+	if err := mgr.AddMessage(skillMsg); err != nil {
+		t.Fatalf("AddMessage skill injection failed: %v", err)
+	}
+	if err := mgr.AddMessage(llm.NewAssistantMessage(strings.Repeat("assistant context ", 60))); err != nil {
+		t.Fatalf("AddMessage triggering assistant failed: %v", err)
+	}
+
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	msgs := mgr.GetNonSystemMessages()
+	if got, want := len(msgs), 2; got != want {
+		t.Fatalf("messages after auto compact = %d, want %d: %#v", got, want, msgs)
+	}
+	if !strings.Contains(msgs[0].Content, "continue after the next compact") {
+		t.Fatalf("first compacted message = %q, want llm summary", msgs[0].Content)
+	}
+	if got := msgs[1].Content; got != skillMsg.Content {
+		t.Fatalf("direct skill injection after compact = %q, want %q", got, skillMsg.Content)
 	}
 }
 
@@ -390,4 +485,25 @@ func messageContents(messages []llm.Message) []string {
 		contents[i] = msg.Content
 	}
 	return contents
+}
+
+func loadSkillToolCallMessage(t *testing.T, toolCallID, skillName string) llm.Message {
+	t.Helper()
+	args, err := json.Marshal(map[string]string{"name": skillName})
+	if err != nil {
+		t.Fatalf("marshal load_skill args: %v", err)
+	}
+	return llm.Message{
+		Role: "assistant",
+		ToolCalls: []llm.ToolCall{
+			{
+				ID:   toolCallID,
+				Type: "function",
+				Function: llm.ToolCallFunc{
+					Name:      "load_skill",
+					Arguments: json.RawMessage(args),
+				},
+			},
+		},
+	}
 }

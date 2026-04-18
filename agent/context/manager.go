@@ -624,6 +624,7 @@ func (m *Manager) compactToTargetLocked(ctx stdctx.Context, targetTokens int, tr
 		return fmt.Errorf("dump pre-compact snapshot: %w", err)
 	}
 
+	skillMessages := invokedSkillMessagesForCompact(m.messages)
 	compacted := m.messages
 	var result CompactResult
 	if m.shouldUseLLMCompactLocked() {
@@ -640,6 +641,7 @@ func (m *Manager) compactToTargetLocked(ctx stdctx.Context, targetTokens int, tr
 		result = fallbackResult
 	}
 
+	compacted = reinjectInvokedSkillMessages(compacted, skillMessages)
 	compacted = keepRecentMessagesWithinTotalBudget(compacted, m.system, targetTokens, m.tokenizer)
 	maxUsableTokens := m.maxUsableTokensLocked()
 	if estimateMessagesWithSystem(compacted, m.system, m.tokenizer) > maxUsableTokens {

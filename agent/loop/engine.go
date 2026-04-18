@@ -165,7 +165,7 @@ type contextCompactionNotice struct {
 	AfterTokens  int
 }
 
-const ContextCompactStartMessage = "compacting context..."
+const ContextCompactStartMessage = "compacting conversation..."
 
 func (ex *executor) run(ctx context.Context) ([]Event, error) {
 	notice, err := ex.addContextMessage(ctx, llm.NewUserMessage(ex.task.Description))
